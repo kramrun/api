@@ -1,14 +1,29 @@
 from typing import Optional
 from fastapi import FastAPI, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from fastapi import HTTPException
 
 class GameLib(BaseModel):
-    title: str
+    title: str = Field(min_length=1)
     genre: str
-    year: int
-    rating: float
+    year: int = Field(ge = 1970, le=2026)
+    rating: float = Field(ge=0, le=10)
     completed: bool
+
+class GameResponse(BaseModel):
+    id: int
+    title: str = Field(min_length=1)
+    genre: str
+    year: int = Field(ge=1970, le=2026)
+    rating: float = Field(ge=0, le=10)
+    completed: bool
+
+class GameUpdate(BaseModel):
+    title: Optional[str] = Field(None, min_length=1)
+    genre: Optional[str] = Field(None, min_length=1)
+    year: Optional[int] = Field(None, ge=1970, le=2026)
+    rating: Optional[float] = Field(None, ge=0, le=10)
+    completed: Optional[bool] = None
 
 next_id = 1
 games_db = []
@@ -94,3 +109,38 @@ def create_game(game: GameLib):
 
 
     return new_game
+
+
+@app.put("/games/{game_id}", response_model=GameResponse) # put я делал с ии т.к не знал как его сдлеать
+def update_game(game_id: int, game: GameUpdate):
+    for this_game in games_db:
+        if this_game["id"] == game_id:
+            update_data = game.model_dump(exclude_unset=True)
+            for key, value in update_data.items():
+                this_game[key] = value
+
+            return this_game
+
+    raise HTTPException(status_code=404, detail="Game not found")
+
+
+@app.patch("/games/{game_id}/complete")
+def complete_game(game_id: int):
+    for game in games_db:
+        if game["id"] == game_id:
+            game["completed"] = True
+
+            return game
+
+    raise HTTPException(status_code=404, detail="Game not found")
+
+
+@app.delete("/games/{game_id}", status_code=status.HTTP_204_NO_CONTENT) # тут я pop сделал с ии потому что забыл как удалять
+def delete_game(game_id: int):
+    for index, game in enumerate(games_db):
+        if game["id"] == game_id:
+            games_db.pop(index)
+
+            return None
+
+    raise HTTPException(status_code=404, detail="Game not found")
