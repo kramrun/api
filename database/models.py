@@ -1,5 +1,5 @@
 from sqlalchemy import Column, Integer, String, Float, Boolean
-from database.connection import Base
+from .connection import Base
 
 
 class Game(Base):

@@ -3,9 +3,14 @@ from sqlalchemy.orm import Session
 from typing import Optional
 import random
 
-from database.connection import get_db
-from database.models import Game
-from database.schemas import GameCreate, GameResponse, GameUpdate
+try:
+    from ..database.connection import get_db
+    from ..database.models import Game
+    from ..database.schemas import GameCreate, GameResponse, GameUpdate
+except ImportError:  # Direct execution of main.py from the API directory.
+    from database.connection import get_db
+    from database.models import Game
+    from database.schemas import GameCreate, GameResponse, GameUpdate
 
 router = APIRouter(prefix="/games", tags=["games"])
 
@@ -23,18 +28,6 @@ def get_games(
     if completed is not None:
         query = query.filter(Game.completed == completed)
     return query.all()
-
-
-@router.get("/{game_id}", response_model=GameResponse)
-def get_game(
-        game_id: int,
-        db: Session = Depends(get_db)
-):
-    """Получить игру по ID"""
-    game = db.query(Game).filter(Game.id == game_id).first()
-    if not game:
-        raise HTTPException(status_code=404, detail="Game not found")
-    return game
 
 
 @router.post("/", response_model=GameResponse, status_code=status.HTTP_201_CREATED)
@@ -116,3 +109,15 @@ def recommend_game(
         raise HTTPException(status_code=404, detail="No recommendations found")
 
     return random.choice(games)
+
+
+@router.get("/{game_id}", response_model=GameResponse)
+def get_game(
+        game_id: int,
+        db: Session = Depends(get_db)
+):
+    """Получить игру по ID"""
+    game = db.query(Game).filter(Game.id == game_id).first()
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found")
+    return game

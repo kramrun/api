@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
-from database.models import Game
-from database.schemas import GameCreate, GameUpdate
+from .models import Game
+from .schemas import GameCreate, GameUpdate
 
 def get_games(db: Session, genre: str = None, completed: bool = None):
     query = db.query(Game)
