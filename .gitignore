@@ -4,4 +4,4 @@ cloudflared-*.log
 __pycache__/
 *.py[cod]
 .env
-
+*.db
