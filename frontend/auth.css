@@ -1,0 +1,43 @@
+.auth-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(5, 6, 17, .9);
+  backdrop-filter: blur(18px);
+}
+
+.auth-screen.hidden { display: none; }
+
+.auth-card {
+  width: min(410px, 100%);
+  display: grid;
+  gap: 16px;
+  padding: 34px;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: #17182b;
+  box-shadow: 0 30px 100px #000;
+}
+
+.auth-card > .brand-mark { margin-bottom: 4px; }
+.auth-card .eyebrow { margin: 0; }
+.auth-card h2 { font-size: 44px; margin-bottom: 8px; }
+.auth-card label { font-size: 11px; font-weight: 800; color: #aaa7b8; }
+.auth-card input { display: block; width: 100%; margin-top: 7px; padding: 13px; border: 1px solid var(--line); border-radius: 10px; background: #101120; color: var(--ink); outline-color: var(--lime); font: 500 13px Manrope; }
+.auth-card .primary-btn { margin-top: 6px; }
+.auth-switch { border: 0; background: transparent; color: var(--lav); font-size: 12px; }
+.auth-error { min-height: 17px; margin: 0; color: #f19c7b; font-size: 12px; }
+.current-user { margin-left: auto; margin-right: 12px; color: var(--muted); font-size: 12px; font-weight: 700; }
+.topbar nav { margin-left: auto; }
+.topbar .current-user + button { margin-right: 8px; }
+button:disabled { cursor: wait; opacity: .65; }
+
+@media (max-width: 700px) {
+  .current-user { display: none; }
+  .topbar .ghost-btn { font-size: 0; }
+  .topbar #logoutButton::after { content: "Выйти"; font-size: 11px; }
+  .auth-card { padding: 26px; }
+}

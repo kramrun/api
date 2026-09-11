@@ -1,27 +1,36 @@
 <!doctype html>
 <html lang="ru">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#080a18" />
-    <title>Checkpoint — игровая библиотека</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Playfair+Display:ital,wght@0,600;0,700;1,600&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/assets/styles.css" />
-  </head>
-  <body>
-    <div class="ambient ambient-one"></div><div class="ambient ambient-two"></div>
-    <header class="topbar"><a class="brand" href="#top"><span class="brand-mark">C</span>checkpoint<span class="brand-dot">.</span></a><nav><a href="#library">Библиотека</a><a href="#insights">Статистика</a></nav><button class="ghost-btn" id="recommendButton">Случайный выбор <span>↗</span></button></header>
-    <main id="top">
-      <section class="hero">
-        <div class="hero-copy"><p class="eyebrow"><span></span> Ваша игровая вселенная</p><h1>Играйте<br />в <em>избранное.</em></h1><p class="hero-text">Храните коллекцию, замечайте важные игры и всегда знайте, что запустить следующим.</p><div class="hero-actions"><button class="primary-btn" id="openCreate">Добавить игру <span>+</span></button><a class="text-link" href="#library">Открыть коллекцию <span>↓</span></a></div></div>
-        <div class="hero-orbit" aria-hidden="true"><div class="orbit-ring"></div><div class="orb orb-one">✦</div><div class="orb orb-two">◉</div><div class="orb-core"><span id="heroCount">0</span><small>игр в пути</small></div><p class="orbit-label">play<br /><i>more</i></p></div>
-      </section>
-      <section class="insights reveal" id="insights"><div class="stat"><span>Коллекция</span><strong id="totalCount">0</strong><small>игр добавлено</small></div><div class="stat"><span>Пройдено</span><strong id="completedCount">0</strong><small id="completionLabel">ещё впереди</small></div><div class="stat rating-stat"><span>Средний рейтинг</span><strong id="averageRating">—</strong><small>по вашей оценке</small></div><div class="progress-stat"><span>Ваш прогресс</span><div class="progress-track"><i id="progressBar"></i></div><strong id="progressValue">0%</strong></div></section>
-      <section class="library" id="library"><div class="section-heading"><div><p class="eyebrow"><span></span> Коллекция</p><h2>Ваши <em>миры</em></h2></div><button class="icon-btn" id="openCreateAlt" aria-label="Добавить игру">+</button></div><div class="toolbar"><label class="search"><span>⌕</span><input id="searchInput" type="search" placeholder="Найти игру" /></label><div class="filters" id="filters"><button class="filter active" data-filter="all">Все</button><button class="filter" data-filter="playing">В процессе</button><button class="filter" data-filter="completed">Пройдено</button></div></div><div class="games-grid" id="gamesGrid"></div><div class="empty-state" id="emptyState" hidden><div>✦</div><h3>Коллекция ждёт первую игру</h3><p>Добавьте ту самую игру, к которой хочется возвращаться.</p><button class="primary-btn" id="openEmpty">Добавить игру <span>+</span></button></div></section>
-    </main>
-    <dialog id="gameDialog"><form id="gameForm" method="dialog"><div class="modal-top"><div><p class="eyebrow"><span></span> Новая запись</p><h2 id="dialogTitle">Добавить игру</h2></div><button class="close-btn" type="button" id="closeDialog" aria-label="Закрыть">×</button></div><input type="hidden" id="gameId" /><div class="form-grid"><label>Название<input id="title" required minlength="1" maxlength="120" placeholder="Например, Clair Obscur" /></label><label>Жанр<input id="genre" required maxlength="60" placeholder="RPG, Action, Indie..." /></label><label>Год<input id="year" type="number" required min="1970" max="2026" value="2026" /></label><label>Рейтинг <output id="ratingOutput">8.0</output><input id="rating" type="range" min="0" max="10" step="0.1" value="8" /></label></div><label class="check"><input id="completed" type="checkbox" /><span>Уже пройдена</span></label><div class="modal-actions"><button type="button" class="cancel-btn" id="cancelDialog">Отмена</button><button class="primary-btn" id="saveButton" value="default">Сохранить <span>→</span></button></div></form></dialog>
-    <div class="toast" id="toast" role="status" aria-live="polite"></div><script src="/assets/app.js"></script>
-  </body>
-</html>
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#080a18">
+  <title>Checkpoint — игровая библиотека</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Playfair+Display:ital,wght@0,600;0,700;1,600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/assets/styles.css">
+  <link rel="stylesheet" href="/assets/auth.css">
+</head>
+<body>
+  <section class="auth-screen" id="authScreen">
+    <form class="auth-card" id="authForm">
+      <span class="brand-mark">C</span>
+      <p class="eyebrow"><span></span> Личная библиотека</p>
+      <h2 id="authTitle">Вход</h2>
+      <label>Логин<input id="authUsername" required minlength="3" maxlength="50" autocomplete="username"></label>
+      <label>Пароль<input id="authPassword" type="password" required minlength="8" maxlength="128" autocomplete="current-password"></label>
+      <button class="primary-btn" id="authSubmit">Войти <span>→</span></button>
+      <button class="auth-switch" type="button" id="authSwitch">Нет аккаунта? Зарегистрироваться</button>
+      <p class="auth-error" id="authError" role="alert"></p>
+    </form>
+  </section>
+  <div class="ambient ambient-one"></div><div class="ambient ambient-two"></div>
+  <header class="topbar"><a class="brand" href="#top"><span class="brand-mark">C</span>checkpoint<span class="brand-dot">.</span></a><nav><a href="#library">Библиотека</a><a href="#insights">Статистика</a></nav><span class="current-user" id="currentUser"></span><button class="ghost-btn" id="logoutButton">Выйти</button><button class="ghost-btn" id="recommendButton">Случайный выбор <span>↗</span></button></header>
+  <main id="top">
+    <section class="hero">
+      <div class="hero-copy"><p class="eyebrow"><span></span> Ваша игровая вселенная</p><h1>Играйте<br>в <em>избранное.</em></h1><p class="hero-text">Храните коллекцию, замечайте важные игры и всегда знайте, что запустить следующим.</p><div class="hero-actions"><button class="primary-btn" id="openCreate">Добавить игру <span>+</span></button><a class="text-link" href="#library">Открыть коллекцию <span>↓</span></a></div></div>
+      <div class="hero-orbit" aria-hidden="true"><div class="orbit-ring"></div><div class="orb orb-one">✦</div><div class="orb orb-two">◉</div><div class="orb-core"><span id="heroCount">0</span><small>игр в пути</small></div><p class="orbit-label">play<br><i>more</i></p></div>
+    </section>
+    <section class="insights reveal" id="insights"><div class="stat"><span>Коллекция</span><strong id="totalCount">0</strong><small>игр добавлено</small></div><div class="stat"><span>Пройдено</span><strong id="completedCount">0</strong><small id="completionLabel">ещё впереди</small></div><div class="stat rating-stat"><span>Средний рейтинг</span><strong id="averageRating">—</strong><small>по вашей оценке</small></div><div class="progress-stat"><span>Ваш прогресс</span><div class="progress-track"><i id="progressBar"></i></div><strong id="progressValue">0%</strong></div></section>
+    <section class="library" id="library"><div class="section-heading"><div><p class="eyebrow"><span></span> Коллекция</p><h2>Ваши <em>миры</em></h2></div><button class="icon-btn" id="openCreateAlt" aria-label="Добавить игру">+</button></div><div class="toolbar"><label class="search"><span>⌕</span><input id="searchInput" type="search" placeholder="Найти игру"></label><div class="filters" id="filters"><button class="filter active" data-filter="all">Все</button><button class="filter" data-filter="playing">В процессе</button><button class="filter" data-filter="completed">Пройдено</button></div></div><div class="games-grid" id="gamesGrid"></div><div class="empty-state" id="emptyState" hidden><div>✦</div><h3>Коллекция ждёт первую игру</h3><p>Добавьте ту самую игру, к которой хочется возвращаться.</p><button class="primary-btn" id="openEmpty">Добавить игру <span>+</span></button></div></section>
+  </main>
+  <dialog id="gameDialog"><form id="gameForm" method="dialog"><div class="modal-top"><div><p class="eyebrow"><span></span> Новая запись</p><h2 id="dialogTitle">Добавить игру</h2></div><button class="close-btn" type="button" id="closeDialog" aria-label="Закрыть">×</button></div><input type="hidden" id="gameId"><div class="form-grid"><label>Название<input id="title" required minlength="1" maxlength="120" placeholder="Например, Clair Obscur"></label><label>Жанр<input id="genre" required maxlength="60" placeholder="RPG, Action, Indie..."></label><label>Год<input id="year" type="number" required min="1970" max="2026" value="2026"></label><label>Рейтинг <output id="ratingOutput">8.0</output><input id="rating" type="range" min="0" max="10" step="0.1" value="8"></label></div><label class="check"><input id="completed" type="checkbox"><span>Уже пройдена</span></label><div class="modal-actions"><button type="button" class="cancel-btn" id="cancelDialog">Отмена</button><button class="primary-btn" id="saveButton">Сохранить <span>→</span></button></div></form></dialog>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div><script src="/assets/app.js?v=20260911-idempotency"></script>
+</body></html>
