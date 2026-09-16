@@ -230,7 +230,7 @@ async function handleTelegramMessage(message, env, db, updateId) {
   if (command === "/add") {
     const game = parseTelegramGame(argumentsText);
     if (!game) {
-      await sendTelegram(env, chatId, "Формат:\n/add Hades \\ Roguelike \\ 2020 \\ 9,5 \\ пройдена\nРазделители: |, \\ или ;\nПорядок: название | жанр | год | рейтинг | пройдена.");
+      await sendTelegram(env, chatId, "Неверный формат.\n\nСкопируйте и заполните:\n/add Название \\ Жанр \\ Год \\ Рейтинг \\ пройдена\n\nПример:\n/add Hades \\ Roguelike \\ 2020 \\ 9,5 \\ пройдена\n\nРазделители: |, \\ или ;");
       return;
     }
     const result = await createTelegramGame(db, user, game, updateId);
