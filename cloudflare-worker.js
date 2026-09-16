@@ -5,6 +5,7 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
 
 const encoder = new TextEncoder();
 const SESSION_SECONDS = 7 * 24 * 60 * 60;
+const PHONE_VERIFICATION_SECONDS = 15 * 60;
 // Cloudflare Web Crypto currently caps PBKDF2 at 100,000 iterations.
 const PBKDF2_ITERATIONS = 100_000;
 
@@ -43,12 +44,164 @@ function safeEqual(left, right) {
   return difference === 0;
 }
 
+function normalizePhone(value) {
+  let digits = String(value || "").replace(/[^\d+]/g, "");
+  if (digits.startsWith("00")) digits = `+${digits.slice(2)}`;
+  if (!digits.startsWith("+")) digits = `+${digits}`;
+  const plain = digits.slice(1);
+  if (plain.length === 11 && plain.startsWith("8")) return `+7${plain.slice(1)}`;
+  if (plain.length < 10 || plain.length > 15 || !/^\d+$/.test(plain)) return null;
+  return `+${plain}`;
+}
+
+function publicUser(user) {
+  return {
+    id: user.id,
+    username: user.username,
+    phone: user.phone || null,
+    phone_verified: Boolean(user.phone_verified_at),
+    telegram_linked: Boolean(user.telegram_id),
+  };
+}
+
+async function sendTelegram(env, chatId, text, extra = {}) {
+  if (!env.TELEGRAM_BOT_TOKEN) return;
+  await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+    method: "POST",
+    headers: {"content-type": "application/json"},
+    body: JSON.stringify({chat_id: chatId, text, ...extra}),
+  });
+}
+
+function telegramCommand(text) {
+  const [command = "", ...argumentsList] = String(text || "").trim().split(/\s+/);
+  return {command: command.toLowerCase().replace(/@[^\s]+$/, ""), argumentsText: argumentsList.join(" ")};
+}
+
+function parseTelegramGame(value) {
+  const [title, genre, yearText, ratingText, completedText] = value.split("|").map(part => part.trim());
+  const year = Number(yearText);
+  const rating = Number(ratingText);
+  const completed = ["да", "пройдена", "пройдено", "yes", "true", "1"].includes(String(completedText || "").toLowerCase());
+  if (!title || title.length > 120 || !genre || genre.length > 60 || !Number.isInteger(year) || year < 1970 || year > 2026 || !Number.isFinite(rating) || rating < 0 || rating > 10) return null;
+  return {title, genre, year, rating, completed};
+}
+
+async function telegramUser(db, telegramId) {
+  return db.prepare("SELECT * FROM users WHERE telegram_id=?").bind(String(telegramId)).first();
+}
+
+async function handleTelegramMessage(message, env, db) {
+  const chatId = message?.chat?.id;
+  const telegramId = message?.from?.id;
+  if (chatId === undefined || telegramId === undefined) return;
+
+  const now = Math.floor(Date.now() / 1000);
+  const text = message.text || "";
+  const {command, argumentsText} = telegramCommand(text);
+
+  if (command === "/start") {
+    const token = argumentsText.startsWith("verify_") ? argumentsText.slice("verify_".length) : "";
+    if (token) {
+      const verification = await db.prepare(`
+        SELECT id FROM phone_verifications WHERE verification_token=? AND expires_at>?
+      `).bind(token, now).first();
+      if (!verification) {
+        await sendTelegram(env, chatId, "Ссылка уже использована или истекла. Создайте новую на сайте.");
+        return;
+      }
+      await db.prepare(`
+        UPDATE phone_verifications SET telegram_user_id=?, telegram_chat_id=? WHERE id=?
+      `).bind(String(telegramId), String(chatId), verification.id).run();
+      await sendTelegram(env, chatId, "Отправьте свой номер кнопкой ниже. Бот сверит его с номером, который вы указали на сайте.", {
+        reply_markup: {
+          keyboard: [[{text: "Подтвердить номер", request_contact: true}]],
+          resize_keyboard: true,
+          one_time_keyboard: true,
+        },
+      });
+      return;
+    }
+    const user = await telegramUser(db, telegramId);
+    await sendTelegram(env, chatId, user
+      ? "Checkpoint подключён. Команды: /rating — моя статистика, /add — добавить игру."
+      : "Сначала привяжите Telegram в личном кабинете Checkpoint: введите номер и откройте ссылку на бота.");
+    return;
+  }
+
+  if (message.contact) {
+    const verification = await db.prepare(`
+      SELECT * FROM phone_verifications
+      WHERE telegram_user_id=? AND telegram_chat_id=? AND expires_at>?
+      ORDER BY created_at DESC LIMIT 1
+    `).bind(String(telegramId), String(chatId), now).first();
+    const contactPhone = normalizePhone(message.contact.phone_number);
+    if (!verification) {
+      await sendTelegram(env, chatId, "Нет активной заявки на подтверждение. Создайте новую на сайте.");
+      return;
+    }
+    if (String(message.contact.user_id || "") !== String(telegramId) || contactPhone !== verification.phone) {
+      await sendTelegram(env, chatId, "Номер не совпал. Отправьте именно свой контакт с номером, указанным на сайте.");
+      return;
+    }
+    const taken = await db.prepare("SELECT id FROM users WHERE telegram_id=? AND id<>?").bind(String(telegramId), verification.user_id).first();
+    if (taken) {
+      await sendTelegram(env, chatId, "Этот Telegram уже привязан к другому аккаунту Checkpoint.");
+      return;
+    }
+    try {
+      await db.batch([
+        db.prepare("UPDATE users SET phone=?,phone_verified_at=?,telegram_id=?,telegram_chat_id=? WHERE id=?")
+          .bind(verification.phone, now, String(telegramId), String(chatId), verification.user_id),
+        db.prepare("DELETE FROM phone_verifications WHERE id=?").bind(verification.id),
+      ]);
+      await sendTelegram(env, chatId, "Номер подтверждён. Теперь доступны /rating и /add.", {reply_markup: {remove_keyboard: true}});
+    } catch (error) {
+      if (String(error).toLowerCase().includes("unique")) {
+        await sendTelegram(env, chatId, "Этот номер уже привязан к другому аккаунту Checkpoint.");
+        return;
+      }
+      throw error;
+    }
+    return;
+  }
+
+  const user = await telegramUser(db, telegramId);
+  if (!user) {
+    await sendTelegram(env, chatId, "Сначала привяжите Telegram на сайте Checkpoint через подтверждение номера.");
+    return;
+  }
+
+  if (command === "/rating") {
+    const stats = await db.prepare(`
+      SELECT COUNT(*) AS total, SUM(CASE WHEN completed=1 THEN 1 ELSE 0 END) AS completed, ROUND(AVG(rating), 1) AS average_rating
+      FROM games WHERE owner_id=?
+    `).bind(user.id).first();
+    await sendTelegram(env, chatId, `Ваша библиотека: ${stats.total} игр\nПройдено: ${stats.completed || 0}\nСредняя оценка: ${stats.average_rating ?? "—"}`);
+    return;
+  }
+
+  if (command === "/add") {
+    const game = parseTelegramGame(argumentsText);
+    if (!game) {
+      await sendTelegram(env, chatId, "Формат: /add Название | Жанр | Год | Рейтинг | пройдена\nПример: /add Hades | Roguelike | 2020 | 9.5 | пройдена");
+      return;
+    }
+    await db.prepare("INSERT INTO games(title,genre,year,rating,completed,owner_id) VALUES(?,?,?,?,?,?)")
+      .bind(game.title, game.genre, game.year, game.rating, game.completed ? 1 : 0, user.id).run();
+    await sendTelegram(env, chatId, `«${game.title}» добавлена в вашу библиотеку.`);
+    return;
+  }
+
+  await sendTelegram(env, chatId, "Команды:\n/rating — моя статистика\n/add Название | Жанр | Год | Рейтинг | пройдена — добавить игру");
+}
+
 async function createSession(db, user) {
   const token = randomToken();
   const expiresAt = Math.floor(Date.now() / 1000) + SESSION_SECONDS;
   await db.prepare("INSERT INTO auth_sessions(token_hash,user_id,expires_at) VALUES(?,?,?)")
     .bind(await sha256(token), user.id, expiresAt).run();
-  return {access_token: token, token_type: "bearer", user: {id: user.id, username: user.username}};
+  return {access_token: token, token_type: "bearer", user: publicUser(user)};
 }
 
 async function authenticate(request, db) {
@@ -58,7 +211,7 @@ async function authenticate(request, db) {
   if (!token) return null;
   const now = Math.floor(Date.now() / 1000);
   const session = await db.prepare(
-    "SELECT s.id AS session_id,s.expires_at,u.id,u.username FROM auth_sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=?",
+    "SELECT s.id AS session_id,s.expires_at,u.id,u.username,u.phone,u.phone_verified_at,u.telegram_id FROM auth_sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=?",
   ).bind(await sha256(token)).first();
   if (!session || session.expires_at <= now) {
     if (session) await db.prepare("DELETE FROM auth_sessions WHERE id=?").bind(session.session_id).run();
@@ -72,6 +225,21 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname;
     const db = env.DB;
+
+    if (path === "/telegram/webhook" && request.method === "POST") {
+      const secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token") || "";
+      if (!env.TELEGRAM_WEBHOOK_SECRET || !safeEqual(secret, env.TELEGRAM_WEBHOOK_SECRET)) {
+        return new Response("Not found", {status: 404});
+      }
+      let update;
+      try { update = await request.json(); } catch { return json({ok: false}, 400); }
+      if (!Number.isInteger(update.update_id)) return json({ok: true});
+      const recorded = await db.prepare("INSERT OR IGNORE INTO telegram_updates(update_id,created_at) VALUES(?,?)")
+        .bind(update.update_id, Math.floor(Date.now() / 1000)).run();
+      if (!recorded.meta.changes) return json({ok: true});
+      if (update.message) await handleTelegramMessage(update.message, env, db);
+      return json({ok: true});
+    }
 
     if ((path === "/auth/register" || path === "/auth/login") && request.method === "POST") {
       let credentials;
@@ -106,11 +274,34 @@ export default {
       if (!session) return json({detail: "Authentication required"}, 401);
 
       if (path === "/auth/me" && request.method === "GET") {
-        return json({id: session.id, username: session.username});
+        return json(publicUser(session));
       }
       if (path === "/auth/logout" && request.method === "POST") {
         await db.prepare("DELETE FROM auth_sessions WHERE id=?").bind(session.session_id).run();
         return new Response(null, {status: 204});
+      }
+      if (path === "/auth/telegram-link" && request.method === "POST") {
+        const botUsername = String(env.TELEGRAM_BOT_USERNAME || "").trim().replace(/^@/, "");
+        if (!/^[A-Za-z0-9_]{5,}$/.test(botUsername)) {
+          return json({detail: "Telegram-бот ещё не настроен"}, 503);
+        }
+        let body;
+        try { body = await request.json(); } catch { return json({detail: "Invalid JSON"}, 400); }
+        const phone = normalizePhone(body.phone);
+        if (!phone) return json({detail: "Введите номер в международном формате, например +79991234567"}, 422);
+        const verificationToken = randomToken(24);
+        const now = Math.floor(Date.now() / 1000);
+        await db.batch([
+          db.prepare("DELETE FROM phone_verifications WHERE user_id=?").bind(session.id),
+          db.prepare(`
+            INSERT INTO phone_verifications(user_id,phone,verification_token,expires_at,created_at)
+            VALUES(?,?,?,?,?)
+          `).bind(session.id, phone, verificationToken, now + PHONE_VERIFICATION_SECONDS, now),
+        ]);
+        return json({
+          telegram_url: `https://t.me/${botUsername}?start=verify_${verificationToken}`,
+          expires_in: PHONE_VERIFICATION_SECONDS,
+        }, 201);
       }
 
       if (path === "/games/" && request.method === "GET") {

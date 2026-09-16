@@ -35,6 +35,15 @@
 .topbar .current-user + button { margin-right: 8px; }
 button:disabled { cursor: wait; opacity: .65; }
 
+#telegramDialog { width: min(480px, calc(100% - 32px)); border: 1px solid var(--line); border-radius: 22px; padding: 0; color: var(--ink); background: #17182b; box-shadow: 0 30px 100px #000; }
+#telegramDialog::backdrop { background: rgba(5, 6, 17, .72); backdrop-filter: blur(8px); }
+#telegramDialog form { display: grid; gap: 18px; padding: 30px; }
+#telegramDialog label { font-size: 11px; font-weight: 800; color: #aaa7b8; }
+#telegramDialog input { display: block; box-sizing: border-box; width: 100%; margin-top: 7px; padding: 13px; border: 1px solid var(--line); border-radius: 10px; outline-color: var(--lime); color: var(--ink); background: #101120; font: 500 13px Manrope; }
+.telegram-copy { margin: -2px 0 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.telegram-status { min-height: 18px; margin: -4px 0 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
+.telegram-status a { color: var(--lime); font-weight: 800; }
+
 @media (max-width: 700px) {
   .current-user { display: none; }
   .topbar .ghost-btn { font-size: 0; }
