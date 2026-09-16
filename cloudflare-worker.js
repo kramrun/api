@@ -93,7 +93,7 @@ function parseTelegramGame(value) {
   const year = Number(yearText);
   const rating = Number(ratingText?.replace(",", "."));
   const completed = ["да", "пройдена", "пройдено", "yes", "true", "1"].includes(String(completedText || "").toLowerCase());
-  if (parts.length !== 5 || !title || title.length > 120 || !genre || genre.length > 60 || !Number.isInteger(year) || year < 1970 || year > currentYear || !Number.isFinite(rating) || rating < 0 || rating > 10) return null;
+  if (parts.length < 4 || parts.length > 5 || !title || title.length > 120 || !genre || genre.length > 60 || !Number.isInteger(year) || year < 1970 || year > currentYear || !Number.isFinite(rating) || rating < 0 || rating > 10) return null;
   return {title, genre, year, rating, completed};
 }
 
@@ -230,7 +230,7 @@ async function handleTelegramMessage(message, env, db, updateId) {
   if (command === "/add") {
     const game = parseTelegramGame(argumentsText);
     if (!game) {
-      await sendTelegram(env, chatId, "Неверный формат.\n\nСкопируйте и заполните:\n/add Название \\ Жанр \\ Год \\ Рейтинг \\ пройдена\n\nПример:\n/add Hades \\ Roguelike \\ 2020 \\ 9,5 \\ пройдена\n\nРазделители: |, \\ или ;");
+      await sendTelegram(env, chatId, "Неверный формат.\n\nСкопируйте и заполните:\n/add Название \\ Жанр \\ Год \\ Рейтинг [\\ пройдена]\n\nПример:\n/add Hades \\ Roguelike \\ 2020 \\ 9,5 \\ пройдена\n\n«пройдена» — необязательно. Разделители: |, \\ или ;");
       return;
     }
     const result = await createTelegramGame(db, user, game, updateId);
@@ -241,7 +241,7 @@ async function handleTelegramMessage(message, env, db, updateId) {
     return;
   }
 
-  await sendTelegram(env, chatId, "Команды:\n/rating — моя статистика\n/add Название | Жанр | Год | Рейтинг | пройдена\nРазделители: |, \\ или ;");
+  await sendTelegram(env, chatId, "Команды:\n/rating — моя статистика\n/add Название | Жанр | Год | Рейтинг [| пройдена]\nРазделители: |, \\ или ;");
 }
 
 async function createSession(db, user) {
