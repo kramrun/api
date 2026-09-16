@@ -87,11 +87,14 @@ function telegramCommand(text) {
 }
 
 function parseTelegramGame(value) {
-  const [title, genre, yearText, ratingText, completedText] = value.split("|").map(part => part.trim());
-  const year = Number(yearText);
-  const rating = Number(ratingText);
+  const parts = value.split("|").map(part => part.trim());
+  const [title, genreInput, yearInput, ratingInput, completedText] = parts;
+  const genre = genreInput || "Не указан";
+  const currentYear = new Date().getUTCFullYear();
+  const year = yearInput ? Number(yearInput) : currentYear;
+  const rating = ratingInput ? Number(ratingInput.replace(",", ".")) : 0;
   const completed = ["да", "пройдена", "пройдено", "yes", "true", "1"].includes(String(completedText || "").toLowerCase());
-  if (!title || title.length > 120 || !genre || genre.length > 60 || !Number.isInteger(year) || year < 1970 || year > 2026 || !Number.isFinite(rating) || rating < 0 || rating > 10) return null;
+  if (parts.length > 5 || !title || title.length > 120 || genre.length > 60 || !Number.isInteger(year) || year < 1970 || year > currentYear || !Number.isFinite(rating) || rating < 0 || rating > 10) return null;
   return {title, genre, year, rating, completed};
 }
 
@@ -228,7 +231,7 @@ async function handleTelegramMessage(message, env, db, updateId) {
   if (command === "/add") {
     const game = parseTelegramGame(argumentsText);
     if (!game) {
-      await sendTelegram(env, chatId, "Формат: /add Название | Жанр | Год | Рейтинг | пройдена\nПример: /add Hades | Roguelike | 2020 | 9.5 | пройдена");
+      await sendTelegram(env, chatId, "Можно добавлять кратко или подробно:\n/add Hades\n/add Hades | Roguelike\n/add Hades | Roguelike | 2020 | 9,5 | пройдена\nПорядок: название | жанр | год | рейтинг | пройдена.");
       return;
     }
     const result = await createTelegramGame(db, user, game, updateId);
@@ -239,7 +242,7 @@ async function handleTelegramMessage(message, env, db, updateId) {
     return;
   }
 
-  await sendTelegram(env, chatId, "Команды:\n/rating — моя статистика\n/add Название | Жанр | Год | Рейтинг | пройдена — добавить игру");
+  await sendTelegram(env, chatId, "Команды:\n/rating — моя статистика\n/add Название — добавить игру\nДополнительно: | жанр | год | рейтинг | пройдена");
 }
 
 async function createSession(db, user) {
