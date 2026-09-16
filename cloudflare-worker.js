@@ -66,11 +66,12 @@ function publicUser(user) {
 
 async function sendTelegram(env, chatId, text, extra = {}) {
   if (!env.TELEGRAM_BOT_TOKEN) return;
-  await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+  const response = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
     method: "POST",
     headers: {"content-type": "application/json"},
     body: JSON.stringify({chat_id: chatId, text, ...extra}),
   });
+  if (!response.ok) throw new Error(`Telegram sendMessage failed: ${response.status}`);
 }
 
 function telegramCommand(text) {
@@ -91,7 +92,42 @@ async function telegramUser(db, telegramId) {
   return db.prepare("SELECT * FROM users WHERE telegram_id=?").bind(String(telegramId)).first();
 }
 
-async function handleTelegramMessage(message, env, db) {
+async function createTelegramGame(db, user, game, updateId) {
+  const idempotencyKey = `telegram-update-${updateId}`;
+  const requestHash = await sha256(JSON.stringify(game));
+  const reservation = await db.prepare(`
+    INSERT OR IGNORE INTO idempotency_records(
+      user_id,idempotency_key,request_hash,response_json,status_code,created_at
+    ) VALUES(?,?,?,NULL,NULL,?)
+  `).bind(user.id, idempotencyKey, requestHash, Math.floor(Date.now() / 1000)).run();
+
+  if (!reservation.meta.changes) {
+    const previous = await db.prepare(`
+      SELECT request_hash,response_json FROM idempotency_records WHERE user_id=? AND idempotency_key=?
+    `).bind(user.id, idempotencyKey).first();
+    if (previous.request_hash !== requestHash) throw new Error("Telegram update payload changed");
+    return {replayed: true, processing: previous.response_json === null};
+  }
+
+  try {
+    const [result] = await db.batch([
+      db.prepare("INSERT INTO games(title,genre,year,rating,completed,owner_id) VALUES(?,?,?,?,?,?)")
+        .bind(game.title, game.genre, game.year, game.rating, game.completed ? 1 : 0, user.id),
+      db.prepare(`
+        UPDATE idempotency_records SET response_json=json_object('id',last_insert_rowid()),status_code=201
+        WHERE user_id=? AND idempotency_key=?
+      `).bind(user.id, idempotencyKey),
+    ]);
+    return {id: result.meta.last_row_id, replayed: false, processing: false};
+  } catch (error) {
+    await db.prepare(`
+      DELETE FROM idempotency_records WHERE user_id=? AND idempotency_key=? AND response_json IS NULL
+    `).bind(user.id, idempotencyKey).run();
+    throw error;
+  }
+}
+
+async function handleTelegramMessage(message, env, db, updateId) {
   const chatId = message?.chat?.id;
   const telegramId = message?.from?.id;
   if (chatId === undefined || telegramId === undefined) return;
@@ -125,7 +161,7 @@ async function handleTelegramMessage(message, env, db) {
     const user = await telegramUser(db, telegramId);
     await sendTelegram(env, chatId, user
       ? "Checkpoint подключён. Команды: /rating — моя статистика, /add — добавить игру."
-      : "Сначала привяжите Telegram в личном кабинете Checkpoint: введите номер и откройте ссылку на бота.");
+      : "Сначала привяжите Telegram: https://checkpoint-game-library.kramrun2.workers.dev/ — войдите или зарегистрируйтесь, введите номер и откройте ссылку на бота.");
     return;
   }
 
@@ -168,7 +204,7 @@ async function handleTelegramMessage(message, env, db) {
 
   const user = await telegramUser(db, telegramId);
   if (!user) {
-    await sendTelegram(env, chatId, "Сначала привяжите Telegram на сайте Checkpoint через подтверждение номера.");
+    await sendTelegram(env, chatId, "Сначала привяжите Telegram: https://checkpoint-game-library.kramrun2.workers.dev/ — войдите или зарегистрируйтесь, введите номер и откройте ссылку на бота.");
     return;
   }
 
@@ -187,9 +223,11 @@ async function handleTelegramMessage(message, env, db) {
       await sendTelegram(env, chatId, "Формат: /add Название | Жанр | Год | Рейтинг | пройдена\nПример: /add Hades | Roguelike | 2020 | 9.5 | пройдена");
       return;
     }
-    await db.prepare("INSERT INTO games(title,genre,year,rating,completed,owner_id) VALUES(?,?,?,?,?,?)")
-      .bind(game.title, game.genre, game.year, game.rating, game.completed ? 1 : 0, user.id).run();
-    await sendTelegram(env, chatId, `«${game.title}» добавлена в вашу библиотеку.`);
+    const result = await createTelegramGame(db, user, game, updateId);
+    if (result.processing) return;
+    await sendTelegram(env, chatId, result.replayed
+      ? `«${game.title}» уже есть в вашей библиотеке.`
+      : `«${game.title}» добавлена в вашу библиотеку.`);
     return;
   }
 
@@ -234,10 +272,15 @@ export default {
       let update;
       try { update = await request.json(); } catch { return json({ok: false}, 400); }
       if (!Number.isInteger(update.update_id)) return json({ok: true});
-      const recorded = await db.prepare("INSERT OR IGNORE INTO telegram_updates(update_id,created_at) VALUES(?,?)")
+      const recorded = await db.prepare("INSERT OR IGNORE INTO telegram_updates(update_id,created_at,processed_at) VALUES(?,?,NULL)")
         .bind(update.update_id, Math.floor(Date.now() / 1000)).run();
-      if (!recorded.meta.changes) return json({ok: true});
-      if (update.message) await handleTelegramMessage(update.message, env, db);
+      if (!recorded.meta.changes) {
+        const previous = await db.prepare("SELECT processed_at FROM telegram_updates WHERE update_id=?").bind(update.update_id).first();
+        if (previous?.processed_at) return json({ok: true});
+      }
+      if (update.message) await handleTelegramMessage(update.message, env, db, update.update_id);
+      await db.prepare("UPDATE telegram_updates SET processed_at=? WHERE update_id=?")
+        .bind(Math.floor(Date.now() / 1000), update.update_id).run();
       return json({ok: true});
     }
 
