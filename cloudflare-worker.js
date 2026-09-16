@@ -6,6 +6,8 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), {
 const encoder = new TextEncoder();
 const SESSION_SECONDS = 7 * 24 * 60 * 60;
 const PHONE_VERIFICATION_SECONDS = 15 * 60;
+const TELEGRAM_CODE_SECONDS = 10 * 60;
+const TELEGRAM_CODE_MAX_ATTEMPTS = 5;
 // Cloudflare Web Crypto currently caps PBKDF2 at 100,000 iterations.
 const PBKDF2_ITERATIONS = 100_000;
 
@@ -52,6 +54,11 @@ function normalizePhone(value) {
   if (plain.length === 11 && plain.startsWith("8")) return `+7${plain.slice(1)}`;
   if (plain.length < 10 || plain.length > 15 || !/^\d+$/.test(plain)) return null;
   return `+${plain}`;
+}
+
+function randomConfirmationCode() {
+  const value = crypto.getRandomValues(new Uint32Array(1))[0] % 1_000_000;
+  return String(value).padStart(6, "0");
 }
 
 function publicUser(user) {
@@ -149,7 +156,7 @@ async function handleTelegramMessage(message, env, db, updateId) {
       await db.prepare(`
         UPDATE phone_verifications SET telegram_user_id=?, telegram_chat_id=? WHERE id=?
       `).bind(String(telegramId), String(chatId), verification.id).run();
-      await sendTelegram(env, chatId, "Отправьте свой номер кнопкой ниже. Бот сверит его с номером, который вы указали на сайте.", {
+      await sendTelegram(env, chatId, "Разрешите боту получить ваш контакт кнопкой ниже. После этого я пришлю код подтверждения в этот чат.", {
         reply_markup: {
           keyboard: [[{text: "Подтвердить номер", request_contact: true}]],
           resize_keyboard: true,
@@ -161,7 +168,7 @@ async function handleTelegramMessage(message, env, db, updateId) {
     const user = await telegramUser(db, telegramId);
     await sendTelegram(env, chatId, user
       ? "Checkpoint подключён. Команды: /rating — моя статистика, /add — добавить игру."
-      : "Сначала привяжите Telegram: https://checkpoint-game-library.kramrun2.workers.dev/ — войдите или зарегистрируйтесь, введите номер и откройте ссылку на бота.");
+      : "Сначала привяжите Telegram: https://checkpoint-game-library.kramrun2.workers.dev/ — войдите или зарегистрируйтесь, нажмите Telegram и откройте ссылку на бота.");
     return;
   }
 
@@ -176,8 +183,8 @@ async function handleTelegramMessage(message, env, db, updateId) {
       await sendTelegram(env, chatId, "Нет активной заявки на подтверждение. Создайте новую на сайте.");
       return;
     }
-    if (String(message.contact.user_id || "") !== String(telegramId) || contactPhone !== verification.phone) {
-      await sendTelegram(env, chatId, "Номер не совпал. Отправьте именно свой контакт с номером, указанным на сайте.");
+    if (String(message.contact.user_id || "") !== String(telegramId) || !contactPhone) {
+      await sendTelegram(env, chatId, "Отправьте именно свой контакт кнопкой Telegram.");
       return;
     }
     const taken = await db.prepare("SELECT id FROM users WHERE telegram_id=? AND id<>?").bind(String(telegramId), verification.user_id).first();
@@ -186,15 +193,16 @@ async function handleTelegramMessage(message, env, db, updateId) {
       return;
     }
     try {
-      await db.batch([
-        db.prepare("UPDATE users SET phone=?,phone_verified_at=?,telegram_id=?,telegram_chat_id=? WHERE id=?")
-          .bind(verification.phone, now, String(telegramId), String(chatId), verification.user_id),
-        db.prepare("DELETE FROM phone_verifications WHERE id=?").bind(verification.id),
-      ]);
-      await sendTelegram(env, chatId, "Номер подтверждён. Теперь доступны /rating и /add.", {reply_markup: {remove_keyboard: true}});
+      const code = randomConfirmationCode();
+      await db.prepare(`
+        UPDATE phone_verifications
+        SET phone=?,confirmation_code_hash=?,code_expires_at=?,code_attempts=0
+        WHERE id=?
+      `).bind(contactPhone, await sha256(`${verification.verification_token}:${code}`), now + TELEGRAM_CODE_SECONDS, verification.id).run();
+      await sendTelegram(env, chatId, `Ваш код Checkpoint: ${code}\nВведите его на сайте в течение 10 минут.`, {reply_markup: {remove_keyboard: true}});
     } catch (error) {
       if (String(error).toLowerCase().includes("unique")) {
-        await sendTelegram(env, chatId, "Этот номер уже привязан к другому аккаунту Checkpoint.");
+        await sendTelegram(env, chatId, "Не удалось отправить код. Создайте новую привязку на сайте.");
         return;
       }
       throw error;
@@ -204,7 +212,7 @@ async function handleTelegramMessage(message, env, db, updateId) {
 
   const user = await telegramUser(db, telegramId);
   if (!user) {
-    await sendTelegram(env, chatId, "Сначала привяжите Telegram: https://checkpoint-game-library.kramrun2.workers.dev/ — войдите или зарегистрируйтесь, введите номер и откройте ссылку на бота.");
+    await sendTelegram(env, chatId, "Сначала привяжите Telegram: https://checkpoint-game-library.kramrun2.workers.dev/ — войдите или зарегистрируйтесь, нажмите Telegram и откройте ссылку на бота.");
     return;
   }
 
@@ -328,10 +336,6 @@ export default {
         if (!/^[A-Za-z0-9_]{5,}$/.test(botUsername)) {
           return json({detail: "Telegram-бот ещё не настроен"}, 503);
         }
-        let body;
-        try { body = await request.json(); } catch { return json({detail: "Invalid JSON"}, 400); }
-        const phone = normalizePhone(body.phone);
-        if (!phone) return json({detail: "Введите номер в международном формате, например +79991234567"}, 422);
         const verificationToken = randomToken(24);
         const now = Math.floor(Date.now() / 1000);
         await db.batch([
@@ -339,12 +343,48 @@ export default {
           db.prepare(`
             INSERT INTO phone_verifications(user_id,phone,verification_token,expires_at,created_at)
             VALUES(?,?,?,?,?)
-          `).bind(session.id, phone, verificationToken, now + PHONE_VERIFICATION_SECONDS, now),
+          `).bind(session.id, "", verificationToken, now + PHONE_VERIFICATION_SECONDS, now),
         ]);
         return json({
           telegram_url: `https://t.me/${botUsername}?start=verify_${verificationToken}`,
           expires_in: PHONE_VERIFICATION_SECONDS,
         }, 201);
+      }
+      if (path === "/auth/telegram-confirm" && request.method === "POST") {
+        let body;
+        try { body = await request.json(); } catch { return json({detail: "Invalid JSON"}, 400); }
+        const code = String(body.code || "").trim();
+        if (!/^\d{6}$/.test(code)) return json({detail: "Введите шестизначный код из Telegram"}, 422);
+        const now = Math.floor(Date.now() / 1000);
+        const verification = await db.prepare(`
+          SELECT * FROM phone_verifications WHERE user_id=? AND expires_at>? ORDER BY created_at DESC LIMIT 1
+        `).bind(session.id, now).first();
+        if (!verification || !verification.confirmation_code_hash || !verification.code_expires_at || verification.code_expires_at <= now) {
+          return json({detail: "Код истёк. Создайте новую привязку Telegram"}, 410);
+        }
+        if (verification.code_attempts >= TELEGRAM_CODE_MAX_ATTEMPTS) {
+          return json({detail: "Слишком много попыток. Создайте новую привязку Telegram"}, 429);
+        }
+        const valid = safeEqual(await sha256(`${verification.verification_token}:${code}`), verification.confirmation_code_hash);
+        if (!valid) {
+          await db.prepare("UPDATE phone_verifications SET code_attempts=code_attempts+1 WHERE id=?").bind(verification.id).run();
+          return json({detail: "Неверный код"}, 422);
+        }
+        const taken = await db.prepare("SELECT id FROM users WHERE telegram_id=? AND id<>?")
+          .bind(verification.telegram_user_id, session.id).first();
+        if (taken) return json({detail: "Этот Telegram уже привязан к другому аккаунту"}, 409);
+        try {
+          await db.batch([
+            db.prepare("UPDATE users SET phone=?,phone_verified_at=?,telegram_id=?,telegram_chat_id=? WHERE id=?")
+              .bind(verification.phone, now, verification.telegram_user_id, verification.telegram_chat_id, session.id),
+            db.prepare("DELETE FROM phone_verifications WHERE id=?").bind(verification.id),
+          ]);
+        } catch (error) {
+          if (String(error).toLowerCase().includes("unique")) return json({detail: "Этот номер уже привязан к другому аккаунту"}, 409);
+          throw error;
+        }
+        const user = await db.prepare("SELECT * FROM users WHERE id=?").bind(session.id).first();
+        return json(publicUser(user));
       }
 
       if (path === "/games/" && request.method === "GET") {

@@ -5,6 +5,6 @@ CREATE INDEX IF NOT EXISTS idx_auth_sessions_token_hash ON auth_sessions(token_h
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires_at ON auth_sessions(expires_at);
 CREATE TABLE IF NOT EXISTS idempotency_records (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, idempotency_key TEXT NOT NULL, request_hash TEXT NOT NULL, response_json TEXT, status_code INTEGER, created_at INTEGER NOT NULL, UNIQUE(user_id, idempotency_key));
 CREATE INDEX IF NOT EXISTS idx_idempotency_created_at ON idempotency_records(created_at);
-CREATE TABLE IF NOT EXISTS phone_verifications (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE, phone TEXT NOT NULL, verification_token TEXT NOT NULL UNIQUE, telegram_user_id TEXT, telegram_chat_id TEXT, expires_at INTEGER NOT NULL, created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS phone_verifications (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE, phone TEXT NOT NULL, verification_token TEXT NOT NULL UNIQUE, telegram_user_id TEXT, telegram_chat_id TEXT, confirmation_code_hash TEXT, code_expires_at INTEGER, code_attempts INTEGER NOT NULL DEFAULT 0, expires_at INTEGER NOT NULL, created_at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_phone_verifications_token ON phone_verifications(verification_token);
 CREATE TABLE IF NOT EXISTS telegram_updates (update_id INTEGER PRIMARY KEY, created_at INTEGER NOT NULL, processed_at INTEGER);
