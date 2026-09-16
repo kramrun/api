@@ -72,7 +72,7 @@ $webhookSecret = "тот_же_секрет"
 Invoke-RestMethod -Method Post -Uri "https://api.telegram.org/bot$telegramToken/setWebhook" -Body @{url="https://checkpoint-game-library.kramrun2.workers.dev/telegram/webhook"; secret_token=$webhookSecret; allowed_updates='["message"]'}
 ```
 
-После этого пользователь на сайте нажимает `Telegram` и открывает выданную ссылку. Бот запрашивает собственный контакт, присылает код в Telegram, а пользователь вводит этот код на сайте. В боте доступны `/rating` и `add Название`; дополнительные поля можно разделить символами `|`, `\` или `;`.
+После этого пользователь на сайте нажимает `Telegram` и открывает выданную ссылку. Бот запрашивает собственный контакт, присылает код в Telegram, а пользователь вводит этот код на сайте. В боте доступны `/rating` и `/add Название`; дополнительные поля можно разделить символами `|`, `\` или `;`.
 
 ## Проверка после публикации
 
