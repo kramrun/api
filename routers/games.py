@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from typing import Optional
 import random
@@ -6,12 +7,12 @@ import random
 try:
     from ..database.connection import get_db
     from ..database.models import Game, User
-    from ..database.schemas import GameCreate, GameResponse, GameUpdate
+    from ..database.schemas import GameCreate, GameResponse, GameUpdate, RatingResponse
     from .auth import get_current_user
 except ImportError:  # Direct execution of main.py from the API directory.
     from database.connection import get_db
     from database.models import Game, User
-    from database.schemas import GameCreate, GameResponse, GameUpdate
+    from database.schemas import GameCreate, GameResponse, GameUpdate, RatingResponse
     from routers.auth import get_current_user
 
 router = APIRouter(
@@ -112,6 +113,41 @@ def delete_game(
     db.delete(db_game)
     db.commit()
     return None
+
+
+@router.get("/ratings", response_model=list[RatingResponse])
+def get_ratings(
+        current_user: User = Depends(get_current_user),
+        db: Session = Depends(get_db)
+):
+    """Общий обезличенный рейтинг игр всех пользователей."""
+    normalized_title = func.lower(func.trim(Game.title)).label("title_key")
+    user_ratings = db.query(
+        Game.owner_id.label("owner_id"),
+        normalized_title,
+        func.max(Game.title).label("title"),
+        func.avg(Game.rating).label("user_rating"),
+    ).filter(
+        Game.owner_id.isnot(None)
+    ).group_by(
+        Game.owner_id,
+        normalized_title,
+    ).subquery()
+
+    average_rating = func.round(func.avg(user_ratings.c.user_rating), 2).label("average_rating")
+    votes = func.count().label("votes")
+    return db.query(
+        user_ratings.c.title_key,
+        func.max(user_ratings.c.title).label("title"),
+        average_rating,
+        votes,
+    ).group_by(
+        user_ratings.c.title_key,
+    ).order_by(
+        average_rating.desc(),
+        votes.desc(),
+        func.max(user_ratings.c.title).asc(),
+    ).limit(100).all()
 
 
 @router.get("/recommend", response_model=GameResponse)

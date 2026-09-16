@@ -27,6 +27,11 @@ def frontend():
     return FileResponse(FRONTEND_DIR / "index.html")
 
 
+@app.get("/ratings.html", include_in_schema=False)
+def ratings_frontend():
+    return FileResponse(FRONTEND_DIR / "ratings.html")
+
+
 if __name__ == "__main__":
     import uvicorn
 

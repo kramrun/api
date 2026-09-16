@@ -197,6 +197,31 @@ export default {
       }
 
 
+      if (path === "/games/ratings" && request.method === "GET") {
+        const {results} = await db.prepare(`
+          WITH user_ratings AS (
+            SELECT
+              owner_id,
+              LOWER(TRIM(title)) AS title_key,
+              MAX(title) AS title,
+              AVG(rating) AS user_rating
+            FROM games
+            WHERE owner_id IS NOT NULL
+            GROUP BY owner_id, LOWER(TRIM(title))
+          )
+          SELECT
+            title_key,
+            MAX(title) AS title,
+            ROUND(AVG(user_rating), 2) AS average_rating,
+            COUNT(*) AS votes
+          FROM user_ratings
+          GROUP BY title_key
+          ORDER BY average_rating DESC, votes DESC, title ASC
+          LIMIT 100
+        `).all();
+        return json(results);
+      }
+
       if (path === "/games/recommend" && request.method === "GET") {
         const game = await db.prepare("SELECT * FROM games WHERE owner_id=? AND completed=0 AND rating>=7 ORDER BY RANDOM() LIMIT 1").bind(session.id).first();
         return game ? json({...game, completed: Boolean(game.completed)}) : json({detail: "No recommendations found"}, 404);

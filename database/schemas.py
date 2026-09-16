@@ -30,6 +30,13 @@ class GameResponse(BaseModel):
         from_attributes = True
 
 
+class RatingResponse(BaseModel):
+    title_key: str
+    title: str
+    average_rating: float
+    votes: int
+
+
 class AuthCredentials(BaseModel):
     username: str = Field(min_length=3, max_length=50)
     password: str = Field(min_length=8, max_length=128)

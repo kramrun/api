@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#080a18">
+  <title>Общий рейтинг — Checkpoint</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Playfair+Display:ital,wght@0,600;0,700;1,600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/assets/styles.css">
+  <link rel="stylesheet" href="/assets/ratings.css">
+</head>
+<body>
+  <div class="ambient ambient-one"></div><div class="ambient ambient-two"></div>
+  <header class="topbar">
+    <a class="brand" href="/"><span class="brand-mark">C</span>checkpoint<span class="brand-dot">.</span></a>
+    <nav><a href="/">Моя библиотека</a><a href="/ratings.html">Общий рейтинг</a></nav>
+  </header>
+  <main class="ratings-page">
+    <section class="ratings-hero">
+      <p class="eyebrow"><span></span> Оценки сообщества</p>
+      <h1>Общий<br><em>рейтинг.</em></h1>
+      <p>Средняя оценка каждой игры по библиотекам всех пользователей. Имена владельцев не показываются.</p>
+    </section>
+    <section class="ratings-panel">
+      <div class="ratings-heading"><span>Место и игра</span><span>Средняя оценка</span></div>
+      <div class="ratings-list" id="ratingsList"></div>
+      <div class="ratings-empty" id="ratingsEmpty" hidden>Пока недостаточно оценок для общего рейтинга.</div>
+      <div class="ratings-error" id="ratingsError" hidden></div>
+    </section>
+  </main>
+  <script src="/assets/ratings.js?v=20260915"></script>
+</body>
+</html>
