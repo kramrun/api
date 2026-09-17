@@ -147,6 +147,7 @@ async function handleTelegramMessage(message, env, db, updateId) {
 
   if (command === "/start") {
     const token = argumentsText.startsWith("verify_") ? argumentsText.slice("verify_".length) : "";
+    const authToken = argumentsText.startsWith("auth_") ? argumentsText.slice("auth_".length) : "";
     if (token) {
       const verification = await db.prepare(`
         SELECT id FROM phone_verifications WHERE verification_token=? AND expires_at>?
@@ -167,6 +168,26 @@ async function handleTelegramMessage(message, env, db, updateId) {
       });
       return;
     }
+    if (authToken) {
+      const authRequest = await db.prepare(`
+        SELECT id FROM telegram_auth_requests WHERE auth_token=? AND expires_at>?
+      `).bind(authToken, now).first();
+      if (!authRequest) {
+        await sendTelegram(env, chatId, "Ссылка для входа истекла. Создайте новую на сайте.");
+        return;
+      }
+      await db.prepare(`
+        UPDATE telegram_auth_requests SET telegram_user_id=?,telegram_chat_id=? WHERE id=?
+      `).bind(String(telegramId), String(chatId), authRequest.id).run();
+      await sendTelegram(env, chatId, "Разрешите боту получить ваш контакт кнопкой ниже. Затем я пришлю код для входа в Checkpoint.", {
+        reply_markup: {
+          keyboard: [[{text: "Подтвердить контакт", request_contact: true}]],
+          resize_keyboard: true,
+          one_time_keyboard: true,
+        },
+      });
+      return;
+    }
     const user = await telegramUser(db, telegramId);
     await sendTelegram(env, chatId, user
       ? "Checkpoint подключён. Команды: /rating — моя статистика, /add — добавить игру."
@@ -181,20 +202,16 @@ async function handleTelegramMessage(message, env, db, updateId) {
       ORDER BY created_at DESC LIMIT 1
     `).bind(String(telegramId), String(chatId), now).first();
     const contactPhone = normalizePhone(message.contact.phone_number);
-    if (!verification) {
-      await sendTelegram(env, chatId, "Нет активной заявки на подтверждение. Создайте новую на сайте.");
-      return;
-    }
     if (String(message.contact.user_id || "") !== String(telegramId) || !contactPhone) {
       await sendTelegram(env, chatId, "Отправьте именно свой контакт кнопкой Telegram.");
       return;
     }
-    const taken = await db.prepare("SELECT id FROM users WHERE telegram_id=? AND id<>?").bind(String(telegramId), verification.user_id).first();
-    if (taken) {
-      await sendTelegram(env, chatId, "Этот Telegram уже привязан к другому аккаунту Checkpoint.");
-      return;
-    }
-    try {
+    if (verification) {
+      const taken = await db.prepare("SELECT id FROM users WHERE telegram_id=? AND id<>?").bind(String(telegramId), verification.user_id).first();
+      if (taken) {
+        await sendTelegram(env, chatId, "Этот Telegram уже привязан к другому аккаунту Checkpoint.");
+        return;
+      }
       const code = randomConfirmationCode();
       await db.prepare(`
         UPDATE phone_verifications
@@ -202,13 +219,25 @@ async function handleTelegramMessage(message, env, db, updateId) {
         WHERE id=?
       `).bind(contactPhone, await sha256(`${verification.verification_token}:${code}`), now + TELEGRAM_CODE_SECONDS, verification.id).run();
       await sendTelegram(env, chatId, `Ваш код Checkpoint: ${code}\nВведите его на сайте в течение 10 минут.`, {reply_markup: {remove_keyboard: true}});
-    } catch (error) {
-      if (String(error).toLowerCase().includes("unique")) {
-        await sendTelegram(env, chatId, "Не удалось отправить код. Создайте новую привязку на сайте.");
-        return;
-      }
-      throw error;
+      return;
     }
+
+    const authRequest = await db.prepare(`
+      SELECT * FROM telegram_auth_requests
+      WHERE telegram_user_id=? AND telegram_chat_id=? AND expires_at>?
+      ORDER BY created_at DESC LIMIT 1
+    `).bind(String(telegramId), String(chatId), now).first();
+    if (!authRequest) {
+      await sendTelegram(env, chatId, "Нет активной заявки на вход. Откройте новую ссылку на сайте.");
+      return;
+    }
+    const code = randomConfirmationCode();
+    await db.prepare(`
+      UPDATE telegram_auth_requests
+      SET phone=?,confirmation_code_hash=?,code_expires_at=?,code_attempts=0
+      WHERE id=?
+    `).bind(contactPhone, await sha256(`${authRequest.auth_token}:${code}`), now + TELEGRAM_CODE_SECONDS, authRequest.id).run();
+    await sendTelegram(env, chatId, `Ваш код входа Checkpoint: ${code}\nВведите его на сайте в течение 10 минут.`, {reply_markup: {remove_keyboard: true}});
     return;
   }
 
@@ -319,6 +348,67 @@ export default {
       if (!user || !safeEqual(await passwordHash(password, fromBase64(user.password_salt)), user.password_hash)) {
         return json({detail: "Неверный логин или пароль"}, 401);
       }
+      return json(await createSession(db, user));
+    }
+
+    if (path === "/auth/telegram-auth-link" && request.method === "POST") {
+      const botUsername = String(env.TELEGRAM_BOT_USERNAME || "").trim().replace(/^@/, "");
+      if (!/^[A-Za-z0-9_]{5,}$/.test(botUsername)) return json({detail: "Telegram-бот ещё не настроен"}, 503);
+      const authToken = randomToken(24);
+      const now = Math.floor(Date.now() / 1000);
+      await db.prepare(`
+        INSERT INTO telegram_auth_requests(auth_token,expires_at,created_at) VALUES(?,?,?)
+      `).bind(authToken, now + PHONE_VERIFICATION_SECONDS, now).run();
+      return json({
+        telegram_url: `https://t.me/${botUsername}?start=auth_${authToken}`,
+        auth_token: authToken,
+        expires_in: PHONE_VERIFICATION_SECONDS,
+      }, 201);
+    }
+
+    if (path === "/auth/telegram-auth-confirm" && request.method === "POST") {
+      let body;
+      try { body = await request.json(); } catch { return json({detail: "Invalid JSON"}, 400); }
+      const code = String(body.code || "").trim();
+      const authToken = String(body.auth_token || "");
+      if (!/^\d{6}$/.test(code)) return json({detail: "Введите шестизначный код из Telegram"}, 422);
+      if (!authToken || authToken.length > 200) return json({detail: "Откройте новую ссылку Telegram"}, 422);
+      const now = Math.floor(Date.now() / 1000);
+      const authRequest = await db.prepare(`
+        SELECT * FROM telegram_auth_requests
+        WHERE auth_token=? AND expires_at>? AND confirmation_code_hash IS NOT NULL
+      `).bind(authToken, now).first();
+      if (!authRequest || !authRequest.code_expires_at || authRequest.code_expires_at <= now) {
+        return json({detail: "Код истёк. Откройте Telegram ещё раз"}, 410);
+      }
+      if (authRequest.code_attempts >= TELEGRAM_CODE_MAX_ATTEMPTS) {
+        return json({detail: "Слишком много попыток. Откройте Telegram ещё раз"}, 429);
+      }
+      const valid = safeEqual(await sha256(`${authRequest.auth_token}:${code}`), authRequest.confirmation_code_hash);
+      if (!valid) {
+        await db.prepare("UPDATE telegram_auth_requests SET code_attempts=code_attempts+1 WHERE id=?").bind(authRequest.id).run();
+        return json({detail: "Неверный код"}, 422);
+      }
+
+      let user = authRequest.completed_user_id
+        ? await db.prepare("SELECT * FROM users WHERE id=?").bind(authRequest.completed_user_id).first()
+        : await db.prepare("SELECT * FROM users WHERE telegram_id=?").bind(authRequest.telegram_user_id).first();
+      if (!user) {
+        let username = `tg_${authRequest.telegram_user_id}`;
+        const occupied = await db.prepare("SELECT id FROM users WHERE username=?").bind(username).first();
+        if (occupied) username = `${username}_${randomToken(3)}`;
+        const salt = crypto.getRandomValues(new Uint8Array(16));
+        const result = await db.prepare(`
+          INSERT INTO users(username,password_hash,password_salt,phone,phone_verified_at,telegram_id,telegram_chat_id)
+          VALUES(?,?,?,?,?,?,?)
+        `).bind(
+          username, await passwordHash(randomToken(), salt), toBase64(salt), authRequest.phone, now,
+          authRequest.telegram_user_id, authRequest.telegram_chat_id,
+        ).run();
+        user = await db.prepare("SELECT * FROM users WHERE id=?").bind(result.meta.last_row_id).first();
+      }
+      await db.prepare("UPDATE telegram_auth_requests SET completed_user_id=? WHERE id=?")
+        .bind(user.id, authRequest.id).run();
       return json(await createSession(db, user));
     }
 

@@ -18,6 +18,9 @@
       <label>Пароль<input id="authPassword" type="password" required minlength="8" maxlength="128" autocomplete="current-password"></label>
       <button class="primary-btn" id="authSubmit">Войти <span>→</span></button>
       <button class="auth-switch" type="button" id="authSwitch">Нет аккаунта? Зарегистрироваться</button>
+      <button class="auth-switch" type="button" id="telegramAuthButton">Войти или зарегистрироваться через Telegram</button>
+      <div id="telegramAuthFields" hidden><label>Код из Telegram<input id="telegramAuthCode" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="000000"></label><button class="primary-btn" type="button" id="telegramAuthConfirm">Подтвердить код <span>→</span></button></div>
+      <p class="auth-error" id="telegramAuthError" role="alert"></p>
       <p class="auth-error" id="authError" role="alert"></p>
     </form>
   </section>
@@ -33,5 +36,5 @@
   </main>
   <dialog id="telegramDialog"><form id="telegramForm"><div class="modal-top"><div><p class="eyebrow"><span></span> Аккаунт</p><h2>Подключить Telegram</h2></div><button class="close-btn" type="button" id="closeTelegramDialog" aria-label="Закрыть">×</button></div><p class="telegram-copy">Откройте бота. Он попросит разрешить отправку вашего контакта, а затем пришлёт код в Telegram.</p><button class="primary-btn" type="button" id="telegramLinkButton">Открыть Telegram <span>→</span></button><label>Код из Telegram<input id="telegramCode" required inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="000000"></label><p class="telegram-status" id="telegramStatus"></p><div class="modal-actions"><button type="button" class="cancel-btn" id="cancelTelegramDialog">Отмена</button><button class="primary-btn" id="telegramSubmit">Подтвердить код <span>→</span></button></div></form></dialog>
   <dialog id="gameDialog"><form id="gameForm" method="dialog"><div class="modal-top"><div><p class="eyebrow"><span></span> Новая запись</p><h2 id="dialogTitle">Добавить игру</h2></div><button class="close-btn" type="button" id="closeDialog" aria-label="Закрыть">×</button></div><input type="hidden" id="gameId"><div class="form-grid"><label>Название<input id="title" required minlength="1" maxlength="120" placeholder="Например, Clair Obscur"></label><label>Жанр<input id="genre" required maxlength="60" placeholder="RPG, Action, Indie..."></label><label>Год<input id="year" type="number" required min="1970" max="2026" value="2026"></label><label>Рейтинг <output id="ratingOutput">8.0</output><input id="rating" type="range" min="0" max="10" step="0.1" value="8"></label></div><label class="check"><input id="completed" type="checkbox"><span>Уже пройдена</span></label><div class="modal-actions"><button type="button" class="cancel-btn" id="cancelDialog">Отмена</button><button class="primary-btn" id="saveButton">Сохранить <span>→</span></button></div></form></dialog>
-  <div class="toast" id="toast" role="status" aria-live="polite"></div><script src="/assets/app.js?v=20260917-telegram-code"></script>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div><script src="/assets/app.js?v=20260917-telegram-auth"></script>
 </body></html>
