@@ -6,6 +6,7 @@ let pendingCreateKey = null;
 let currentUser = null;
 let pendingTelegramAuthToken = null;
 let publishingGame = null;
+let pendingPublishKey = null;
 const $ = (selector) => document.querySelector(selector);
 const grid = $('#gamesGrid'), dialog = $('#gameDialog'), form = $('#gameForm');
 
@@ -76,6 +77,7 @@ form.addEventListener('submit', async e => {
 });
 async function openPublish(game) {
   publishingGame = game;
+  pendingPublishKey = crypto.randomUUID();
   $('#publishGameTitle').textContent = `Проверяем: ${game.title} (${game.year})`;
   $('#publishStatus').textContent = 'Ищем игру в общем каталоге…';
   $('#publishCandidate').innerHTML = '';
@@ -90,7 +92,12 @@ async function openPublish(game) {
 }
 grid.addEventListener('click', async e => { const button = e.target.closest('button[data-action]'); if (!button) return; const game = games.find(g => g.id === +button.dataset.id); if (!game) return; if (button.dataset.action === 'edit') return openForm(game); if (button.dataset.action === 'publish') return openPublish(game); if (button.dataset.action === 'delete' && !confirm(`Удалить «${game.title}»?`)) return; try { if (button.dataset.action === 'complete') await request(`${api}${game.id}/complete`, {method:'PATCH'}); if (button.dataset.action === 'delete') await request(`${api}${game.id}`, {method:'DELETE'}); toast(button.dataset.action === 'delete' ? 'Игра удалена' : 'Отмечено как пройдено'); await loadGames(); } catch(err) { toast(err.message); } });
 $('#closePublishDialog').onclick = $('#cancelPublishDialog').onclick = () => $('#publishDialog').close();
-$('#publishForm').addEventListener('submit', async event => { event.preventDefault(); if (!publishingGame || !$('#publishCandidate').value) return; const button = $('#publishSubmit'); if (button.disabled) return; button.disabled = true; $('#publishStatus').textContent = ''; try { await request('/community/publish', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({personal_game_id:publishingGame.id, external_id:$('#publishCandidate').value, review_text:$('#publishReview').value.trim()})}); $('#publishDialog').close(); toast('Игра опубликована в общей библиотеке'); } catch (error) { $('#publishStatus').textContent = error.message; } finally { button.disabled = false; } });
+async function publishGame(body, idempotencyKey) {
+  const options = {method:'POST', headers:{'Content-Type':'application/json', 'Idempotency-Key':idempotencyKey}, body:JSON.stringify(body)};
+  try { return await request('/community/publish', options); }
+  catch (error) { if (!(error instanceof TypeError)) throw error; return request('/community/publish', options); }
+}
+$('#publishForm').addEventListener('submit', async event => { event.preventDefault(); if (!publishingGame || !$('#publishCandidate').value) return; const button = $('#publishSubmit'); if (button.disabled) return; button.disabled = true; $('#publishStatus').textContent = ''; try { await publishGame({personal_game_id:publishingGame.id, external_id:$('#publishCandidate').value, review_text:$('#publishReview').value.trim()}, pendingPublishKey ||= crypto.randomUUID()); pendingPublishKey = null; $('#publishDialog').close(); toast('Игра опубликована в общей библиотеке'); } catch (error) { $('#publishStatus').textContent = error.message; } finally { button.disabled = false; } });
 $('#searchInput').addEventListener('input', render); $('#filters').addEventListener('click', e => { const button = e.target.closest('button'); if (!button) return; activeFilter = button.dataset.filter; document.querySelectorAll('.filter').forEach(b => b.classList.toggle('active', b === button)); render(); });
 $('#recommendButton').onclick = async () => { try { const game = await request(`${api}recommend`); toast(`Ваш следующий мир: ${game.title}`); document.querySelector(`[data-id="${game.id}"]`)?.closest('.game-card')?.scrollIntoView({behavior:'smooth', block:'center'}); } catch (e) { toast('Нет непройденных игр с рейтингом от 7'); } };
 

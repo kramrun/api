@@ -583,8 +583,36 @@ export default {
       }
 
       if (path === "/community/publish" && request.method === "POST") {
+        const idempotencyKey = request.headers.get("Idempotency-Key");
+        if (!idempotencyKey || idempotencyKey.length > 200) {
+          return json({detail: "Valid Idempotency-Key is required"}, 400);
+        }
+        const requestBody = await request.text();
+        const requestHash = await sha256(requestBody);
         let body;
-        try { body = await request.json(); } catch { return json({detail: "Invalid JSON"}, 400); }
+        try { body = JSON.parse(requestBody); } catch { return json({detail: "Invalid JSON"}, 400); }
+        const createdAt = Math.floor(Date.now() / 1000);
+        const reservation = await db.prepare(`
+          INSERT OR IGNORE INTO idempotency_records(
+            user_id,idempotency_key,request_hash,response_json,status_code,created_at
+          ) VALUES(?,?,?,NULL,NULL,?)
+        `).bind(session.id, idempotencyKey, requestHash, createdAt).run();
+        if (!reservation.meta.changes) {
+          const previous = await db.prepare(`
+            SELECT request_hash,response_json,status_code FROM idempotency_records
+            WHERE user_id=? AND idempotency_key=?
+          `).bind(session.id, idempotencyKey).first();
+          if (previous.request_hash !== requestHash) {
+            return json({detail: "Idempotency-Key was already used for another request"}, 409);
+          }
+          if (previous.response_json === null) {
+            return json({detail: "Request with this Idempotency-Key is still processing"}, 409);
+          }
+          return new Response(previous.response_json, {
+            status: previous.status_code,
+            headers: {"content-type": "application/json;charset=utf-8", "Idempotency-Replayed": "true"},
+          });
+        }
         const personalGameId = Number(body.personal_game_id);
         const externalId = String(body.external_id || "");
         const reviewText = String(body.review_text || "").trim();
@@ -598,16 +626,31 @@ export default {
         try { externalGame = await rawgRequest(env, `/games/${encodeURIComponent(externalId)}`); }
         catch { return json({detail: "Игра не найдена во внешнем каталоге"}, 422); }
         const now = Math.floor(Date.now() / 1000);
-        await catalogUpsertStatement(db, externalGame, now).run();
-        const catalogGame = await db.prepare("SELECT id FROM catalog_games WHERE source='rawg' AND external_id=?")
-          .bind(externalId).first();
-        await db.prepare(`
-          INSERT INTO community_posts(user_id,personal_game_id,catalog_game_id,review_text,status,published_at,updated_at)
-          VALUES(?,?,?,?, 'published', ?, ?)
-          ON CONFLICT(user_id,personal_game_id) DO UPDATE SET
-            catalog_game_id=excluded.catalog_game_id,review_text=excluded.review_text,status='published',updated_at=excluded.updated_at
-        `).bind(session.id, personalGameId, catalogGame.id, reviewText, now, now).run();
-        return json({catalog_game_id: catalogGame.id, title: externalGame.name, published: true}, 201);
+        try {
+          await catalogUpsertStatement(db, externalGame, now).run();
+          const catalogGame = await db.prepare("SELECT id FROM catalog_games WHERE source='rawg' AND external_id=?")
+            .bind(externalId).first();
+          const response = {catalog_game_id: catalogGame.id, title: externalGame.name, published: true};
+          await db.batch([
+            db.prepare(`
+              INSERT INTO community_posts(user_id,personal_game_id,catalog_game_id,review_text,status,published_at,updated_at)
+              VALUES(?,?,?,?, 'published', ?, ?)
+              ON CONFLICT(user_id,personal_game_id) DO UPDATE SET
+                catalog_game_id=excluded.catalog_game_id,review_text=excluded.review_text,status='published',updated_at=excluded.updated_at
+            `).bind(session.id, personalGameId, catalogGame.id, reviewText, now, now),
+            db.prepare(`
+              UPDATE idempotency_records SET response_json=?,status_code=201
+              WHERE user_id=? AND idempotency_key=?
+            `).bind(JSON.stringify(response), session.id, idempotencyKey),
+          ]);
+          return json(response, 201);
+        } catch (error) {
+          await db.prepare(`
+            DELETE FROM idempotency_records
+            WHERE user_id=? AND idempotency_key=? AND response_json IS NULL
+          `).bind(session.id, idempotencyKey).run();
+          throw error;
+        }
       }
 
       if (path === "/community/posts" && request.method === "GET") {
