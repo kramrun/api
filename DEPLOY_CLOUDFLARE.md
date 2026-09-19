@@ -41,6 +41,18 @@ npx wrangler deploy
 
 Каждое следующее изменение публикуется той же командой `npx wrangler deploy`.
 
+## Общий каталог игр
+
+Общий каталог хранится в таблицах `catalog_games`, `user_games`, `reviews` и `sync_runs` в той же D1-базе, что сайт и бот. Worker запускает ежедневную синхронизацию RAWG в 03:00 UTC и обновляет последние изменённые игры.
+
+Для включения синхронизации получите ключ на [RAWG](https://rawg.io/apidocs) и сохраните его в Cloudflare Secrets:
+
+```powershell
+npx wrangler secret put RAWG_API_KEY
+```
+
+Без ключа Worker не меняет каталог и записывает запуск как `skipped` в `sync_runs`.
+
 ## Telegram-бот и подтверждение телефона
 
 1. В Telegram откройте `@BotFather`, выполните `/newbot` и сохраните токен и username бота без `@`.

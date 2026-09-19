@@ -61,6 +61,62 @@ function randomConfirmationCode() {
   return String(value).padStart(6, "0");
 }
 
+function normalizeCatalogTitle(value) {
+  return String(value || "").trim().toLocaleLowerCase().replace(/\s+/g, " ");
+}
+
+function releaseYear(value) {
+  const match = String(value || "").match(/^(\d{4})/);
+  return match ? Number(match[1]) : null;
+}
+
+async function syncRawgCatalog(env, db, triggerType = "cron") {
+  const now = Math.floor(Date.now() / 1000);
+  const run = await db.prepare(`
+    INSERT INTO sync_runs(source,status,trigger_type,started_at) VALUES('rawg','running',?,?)
+  `).bind(triggerType, now).run();
+  const runId = run.meta.last_row_id;
+
+  if (!env.RAWG_API_KEY) {
+    await db.prepare(`
+      UPDATE sync_runs SET status='skipped',error_message=?,finished_at=? WHERE id=?
+    `).bind("RAWG_API_KEY is not configured", now, runId).run();
+    return;
+  }
+
+  try {
+    const params = new URLSearchParams({key: env.RAWG_API_KEY, page: "1", page_size: "40", ordering: "-updated"});
+    const response = await fetch(`https://api.rawg.io/api/games?${params}`);
+    if (!response.ok) throw new Error(`RAWG responded with ${response.status}`);
+    const payload = await response.json();
+    if (!Array.isArray(payload.results)) throw new Error("RAWG response has no game list");
+
+    const statements = payload.results.map(game => db.prepare(`
+      INSERT INTO catalog_games(
+        source,external_id,slug,title,normalized_title,released_at,release_year,genres_json,
+        cover_url,source_updated_at,is_active,synced_at,created_at
+      ) VALUES(?,?,?,?,?,?,?,?,?,?,1,?,?)
+      ON CONFLICT(source,external_id) DO UPDATE SET
+        slug=excluded.slug,title=excluded.title,normalized_title=excluded.normalized_title,
+        released_at=excluded.released_at,release_year=excluded.release_year,genres_json=excluded.genres_json,
+        cover_url=excluded.cover_url,source_updated_at=excluded.source_updated_at,is_active=1,synced_at=excluded.synced_at
+    `).bind(
+      "rawg", String(game.id), game.slug || null, game.name, normalizeCatalogTitle(game.name),
+      game.released || null, releaseYear(game.released), JSON.stringify((game.genres || []).map(genre => genre.name)),
+      game.background_image || null, game.updated || null, now, now,
+    ));
+    if (statements.length) await db.batch(statements);
+    await db.prepare(`
+      UPDATE sync_runs SET status='completed',processed_count=?,finished_at=? WHERE id=?
+    `).bind(payload.results.length, Math.floor(Date.now() / 1000), runId).run();
+  } catch (error) {
+    await db.prepare(`
+      UPDATE sync_runs SET status='failed',error_message=?,finished_at=? WHERE id=?
+    `).bind(String(error).slice(0, 500), Math.floor(Date.now() / 1000), runId).run();
+    throw error;
+  }
+}
+
 function publicUser(user) {
   return {
     id: user.id,
@@ -412,7 +468,7 @@ export default {
       return json(await createSession(db, user));
     }
 
-    if (path.startsWith("/auth/") || path.startsWith("/games/")) {
+    if (path.startsWith("/auth/") || path.startsWith("/games/") || path.startsWith("/catalog/")) {
       const session = await authenticate(request, db);
       if (!session) return json({detail: "Authentication required"}, 401);
 
@@ -477,6 +533,18 @@ export default {
         }
         const user = await db.prepare("SELECT * FROM users WHERE id=?").bind(session.id).first();
         return json(publicUser(user));
+      }
+
+      if (path === "/catalog/search" && request.method === "GET") {
+        const query = normalizeCatalogTitle(url.searchParams.get("q"));
+        if (query.length < 2) return json({detail: "Введите минимум 2 символа для поиска"}, 422);
+        const {results} = await db.prepare(`
+          SELECT id,source,external_id,title,released_at,release_year,genres_json,cover_url
+          FROM catalog_games
+          WHERE is_active=1 AND normalized_title LIKE ?
+          ORDER BY title ASC LIMIT 20
+        `).bind(`%${query}%`).all();
+        return json(results.map(game => ({...game, genres: JSON.parse(game.genres_json)})));
       }
 
       if (path === "/games/" && request.method === "GET") {
@@ -621,5 +689,8 @@ export default {
       return env.ASSETS.fetch(new Request(assetUrl, request));
     }
     return env.ASSETS.fetch(request);
+  },
+  async scheduled(controller, env, ctx) {
+    ctx.waitUntil(syncRawgCatalog(env, env.DB));
   },
 };
