@@ -44,6 +44,9 @@ button:disabled { cursor: wait; opacity: .65; }
 .telegram-copy { margin: -2px 0 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
 .telegram-status { min-height: 18px; margin: -4px 0 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
 .telegram-status a { color: var(--lime); font-weight: 800; }
+#publishDialog label { display:grid; gap:7px; margin-top:16px; color:#aaa7b8; font-size:11px; font-weight:800; }
+#publishDialog select,#publishDialog textarea { width:100%; border:1px solid var(--line); border-radius:10px; padding:12px; color:var(--ink); background:#101120; font:500 13px Manrope; outline-color:var(--lime); }
+#publishDialog textarea { min-height:120px; resize:vertical; }
 
 @media (max-width: 700px) {
   .current-user { display: none; }

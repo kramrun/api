@@ -70,6 +70,31 @@ function releaseYear(value) {
   return match ? Number(match[1]) : null;
 }
 
+function catalogUpsertStatement(db, game, now) {
+  return db.prepare(`
+    INSERT INTO catalog_games(
+      source,external_id,slug,title,normalized_title,released_at,release_year,genres_json,
+      cover_url,source_updated_at,is_active,synced_at,created_at
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,1,?,?)
+    ON CONFLICT(source,external_id) DO UPDATE SET
+      slug=excluded.slug,title=excluded.title,normalized_title=excluded.normalized_title,
+      released_at=excluded.released_at,release_year=excluded.release_year,genres_json=excluded.genres_json,
+      cover_url=excluded.cover_url,source_updated_at=excluded.source_updated_at,is_active=1,synced_at=excluded.synced_at
+  `).bind(
+    "rawg", String(game.id), game.slug || null, game.name, normalizeCatalogTitle(game.name),
+    game.released || null, releaseYear(game.released), JSON.stringify((game.genres || []).map(genre => genre.name)),
+    game.background_image || null, game.updated || null, now, now,
+  );
+}
+
+async function rawgRequest(env, path, params = {}) {
+  if (!env.RAWG_API_KEY) throw new Error("RAWG_API_KEY is not configured");
+  const query = new URLSearchParams({key: env.RAWG_API_KEY, ...params});
+  const response = await fetch(`https://api.rawg.io/api${path}?${query}`);
+  if (!response.ok) throw new Error(`RAWG responded with ${response.status}`);
+  return response.json();
+}
+
 async function syncRawgCatalog(env, db, triggerType = "cron") {
   const now = Math.floor(Date.now() / 1000);
   const run = await db.prepare(`
@@ -85,30 +110,18 @@ async function syncRawgCatalog(env, db, triggerType = "cron") {
   }
 
   try {
-    const params = new URLSearchParams({key: env.RAWG_API_KEY, page: "1", page_size: "40", ordering: "-updated"});
-    const response = await fetch(`https://api.rawg.io/api/games?${params}`);
-    if (!response.ok) throw new Error(`RAWG responded with ${response.status}`);
-    const payload = await response.json();
-    if (!Array.isArray(payload.results)) throw new Error("RAWG response has no game list");
-
-    const statements = payload.results.map(game => db.prepare(`
-      INSERT INTO catalog_games(
-        source,external_id,slug,title,normalized_title,released_at,release_year,genres_json,
-        cover_url,source_updated_at,is_active,synced_at,created_at
-      ) VALUES(?,?,?,?,?,?,?,?,?,?,1,?,?)
-      ON CONFLICT(source,external_id) DO UPDATE SET
-        slug=excluded.slug,title=excluded.title,normalized_title=excluded.normalized_title,
-        released_at=excluded.released_at,release_year=excluded.release_year,genres_json=excluded.genres_json,
-        cover_url=excluded.cover_url,source_updated_at=excluded.source_updated_at,is_active=1,synced_at=excluded.synced_at
-    `).bind(
-      "rawg", String(game.id), game.slug || null, game.name, normalizeCatalogTitle(game.name),
-      game.released || null, releaseYear(game.released), JSON.stringify((game.genres || []).map(genre => genre.name)),
-      game.background_image || null, game.updated || null, now, now,
-    ));
+    const {results: catalogGames} = await db.prepare(`
+      SELECT external_id FROM catalog_games WHERE source='rawg' ORDER BY synced_at ASC LIMIT 20
+    `).all();
+    const externalGames = [];
+    for (const catalogGame of catalogGames) {
+      externalGames.push(await rawgRequest(env, `/games/${encodeURIComponent(catalogGame.external_id)}`));
+    }
+    const statements = externalGames.map(game => catalogUpsertStatement(db, game, now));
     if (statements.length) await db.batch(statements);
     await db.prepare(`
       UPDATE sync_runs SET status='completed',processed_count=?,finished_at=? WHERE id=?
-    `).bind(payload.results.length, Math.floor(Date.now() / 1000), runId).run();
+    `).bind(externalGames.length, Math.floor(Date.now() / 1000), runId).run();
   } catch (error) {
     await db.prepare(`
       UPDATE sync_runs SET status='failed',error_message=?,finished_at=? WHERE id=?
@@ -468,7 +481,7 @@ export default {
       return json(await createSession(db, user));
     }
 
-    if (path.startsWith("/auth/") || path.startsWith("/games/") || path.startsWith("/catalog/")) {
+    if (path.startsWith("/auth/") || path.startsWith("/games/") || path.startsWith("/catalog/") || path.startsWith("/community/")) {
       const session = await authenticate(request, db);
       if (!session) return json({detail: "Authentication required"}, 401);
 
@@ -545,6 +558,68 @@ export default {
           ORDER BY title ASC LIMIT 20
         `).bind(`%${query}%`).all();
         return json(results.map(game => ({...game, genres: JSON.parse(game.genres_json)})));
+      }
+
+      if (path === "/community/validate-game" && request.method === "POST") {
+        let body;
+        try { body = await request.json(); } catch { return json({detail: "Invalid JSON"}, 400); }
+        const personalGameId = Number(body.personal_game_id);
+        if (!Number.isInteger(personalGameId) || personalGameId <= 0) return json({detail: "Некорректная игра"}, 422);
+        const game = await db.prepare("SELECT id,title,year FROM games WHERE id=? AND owner_id=?")
+          .bind(personalGameId, session.id).first();
+        if (!game) return json({detail: "Игра не найдена в вашей библиотеке"}, 404);
+        if (!env.RAWG_API_KEY) return json({detail: "Каталог игр временно не настроен"}, 503);
+        try {
+          const payload = await rawgRequest(env, "/games", {search: game.title, search_precise: "true", page_size: "5"});
+          const candidates = (payload.results || []).map(candidate => ({
+            external_id: String(candidate.id), title: candidate.name, released_at: candidate.released || null,
+            release_year: releaseYear(candidate.released), genres: (candidate.genres || []).map(genre => genre.name),
+            cover_url: candidate.background_image || null,
+          }));
+          return json({personal_game: game, candidates});
+        } catch (error) {
+          return json({detail: "Не удалось проверить игру во внешнем каталоге"}, 502);
+        }
+      }
+
+      if (path === "/community/publish" && request.method === "POST") {
+        let body;
+        try { body = await request.json(); } catch { return json({detail: "Invalid JSON"}, 400); }
+        const personalGameId = Number(body.personal_game_id);
+        const externalId = String(body.external_id || "");
+        const reviewText = String(body.review_text || "").trim();
+        if (!Number.isInteger(personalGameId) || personalGameId <= 0 || !/^\d+$/.test(externalId)) return json({detail: "Некорректные данные публикации"}, 422);
+        if (reviewText.length > 3_000) return json({detail: "Отзыв не должен быть длиннее 3000 символов"}, 422);
+        const personalGame = await db.prepare("SELECT id FROM games WHERE id=? AND owner_id=?")
+          .bind(personalGameId, session.id).first();
+        if (!personalGame) return json({detail: "Игра не найдена в вашей библиотеке"}, 404);
+        if (!env.RAWG_API_KEY) return json({detail: "Каталог игр временно не настроен"}, 503);
+        let externalGame;
+        try { externalGame = await rawgRequest(env, `/games/${encodeURIComponent(externalId)}`); }
+        catch { return json({detail: "Игра не найдена во внешнем каталоге"}, 422); }
+        const now = Math.floor(Date.now() / 1000);
+        await catalogUpsertStatement(db, externalGame, now).run();
+        const catalogGame = await db.prepare("SELECT id FROM catalog_games WHERE source='rawg' AND external_id=?")
+          .bind(externalId).first();
+        await db.prepare(`
+          INSERT INTO community_posts(user_id,personal_game_id,catalog_game_id,review_text,status,published_at,updated_at)
+          VALUES(?,?,?,?, 'published', ?, ?)
+          ON CONFLICT(user_id,personal_game_id) DO UPDATE SET
+            catalog_game_id=excluded.catalog_game_id,review_text=excluded.review_text,status='published',updated_at=excluded.updated_at
+        `).bind(session.id, personalGameId, catalogGame.id, reviewText, now, now).run();
+        return json({catalog_game_id: catalogGame.id, title: externalGame.name, published: true}, 201);
+      }
+
+      if (path === "/community/posts" && request.method === "GET") {
+        const {results} = await db.prepare(`
+          SELECT p.id,p.review_text,p.published_at,u.username,c.title,c.release_year,c.genres_json,c.cover_url
+          FROM community_posts p
+          JOIN users u ON u.id=p.user_id
+          JOIN catalog_games c ON c.id=p.catalog_game_id
+          WHERE p.status='published'
+          ORDER BY p.published_at DESC LIMIT 50
+        `).all();
+        return json(results.map(post => ({...post, genres: JSON.parse(post.genres_json)})));
       }
 
       if (path === "/games/" && request.method === "GET") {
