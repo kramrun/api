@@ -631,7 +631,7 @@ export default {
           const titleMatches = (search.results || []).filter(candidate =>
             normalizeCatalogTitle(candidate.name) === normalizeCatalogTitle(personalGame.title),
           );
-          const candidate = titleMatches.find(item => releaseYear(item.released) === personalGame.year) || titleMatches[0];
+          const candidate = titleMatches.find(item => releaseYear(item.released) === personalGame.year);
           if (!candidate) {
             await releaseReservation();
             return json({detail: "Игра не найдена в общем каталоге. Проверьте название и год в личной библиотеке."}, 422);
@@ -641,6 +641,13 @@ export default {
           await catalogUpsertStatement(db, externalGame, now).run();
           const catalogGame = await db.prepare("SELECT id FROM catalog_games WHERE source='rawg' AND external_id=?")
             .bind(String(candidate.id)).first();
+          const alreadyPublished = await db.prepare(`
+            SELECT id FROM community_posts WHERE user_id=? AND catalog_game_id=? AND status='published' LIMIT 1
+          `).bind(session.id, catalogGame.id).first();
+          if (alreadyPublished) {
+            await releaseReservation();
+            return json({detail: "Эта игра уже опубликована вами в общей библиотеке"}, 409);
+          }
           const response = {catalog_game_id: catalogGame.id, title: externalGame.name, published: true};
           await db.batch([
             db.prepare(`
@@ -671,6 +678,22 @@ export default {
           ORDER BY p.published_at DESC LIMIT 50
         `).all();
         return json(results.map(post => ({...post, genres: JSON.parse(post.genres_json)})));
+      }
+
+      if (path === "/community/library" && request.method === "GET") {
+        const {results} = await db.prepare(`
+          SELECT c.id,c.title,c.release_year,c.genres_json,c.cover_url,
+            ROUND(AVG(g.rating), 2) AS average_rating,
+            COUNT(DISTINCT p.user_id) AS votes
+          FROM community_posts p
+          JOIN catalog_games c ON c.id=p.catalog_game_id
+          JOIN games g ON g.id=p.personal_game_id
+          WHERE p.status='published'
+          GROUP BY c.id
+          ORDER BY average_rating DESC, votes DESC, c.title ASC
+          LIMIT 100
+        `).all();
+        return json(results.map(game => ({...game, genres: JSON.parse(game.genres_json)})));
       }
 
       if (path === "/games/" && request.method === "GET") {

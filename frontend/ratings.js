@@ -15,7 +15,7 @@ async function loadRatings() {
     return;
   }
 
-  const response = await fetch('/games/ratings', {
+  const response = await fetch('/community/library', {
     headers: {Authorization: `Bearer ${token}`},
   });
 
@@ -24,18 +24,17 @@ async function loadRatings() {
     window.location.replace('/');
     return;
   }
-  if (!response.ok) throw new Error('Не удалось загрузить общий рейтинг');
+  if (!response.ok) throw new Error('Не удалось загрузить общую библиотеку');
 
   const ratings = await response.json();
   empty.hidden = ratings.length !== 0;
-  list.innerHTML = ratings.map((game, index) => `
-    <article class="rating-row">
-      <strong class="rating-position">${index + 1}</strong>
-      <div class="rating-game">
-        <h2>${escapeHtml(game.title)}</h2>
-        <span>${game.votes} ${game.votes === 1 ? 'оценка' : 'оценок'}</span>
-      </div>
-      <strong class="rating-value">${Number(game.average_rating).toFixed(1)}</strong>
+  list.innerHTML = ratings.map(game => `
+    <article class="library-card">
+      <div class="library-art">${game.cover_url ? `<img src="${escapeHtml(game.cover_url)}" alt="">` : `<span>${escapeHtml(game.title.slice(0, 1))}</span>`}</div>
+      <div class="library-card-top"><span>${game.release_year || 'Год не указан'}</span><strong>${Number(game.average_rating).toFixed(1)}</strong></div>
+      <h2>${escapeHtml(game.title)}</h2>
+      <p class="library-genres">${escapeHtml(game.genres.length ? game.genres.slice(0, 3).join(' · ') : 'Жанр не указан')}</p>
+      <p class="library-votes">${game.votes} ${game.votes === 1 ? 'оценка из общей библиотеки' : 'оценок из общей библиотеки'}</p>
     </article>
   `).join('');
 }
