@@ -5,8 +5,7 @@
   display: grid;
   place-items: center;
   padding: 20px;
-  background: rgba(5, 6, 17, .9);
-  backdrop-filter: blur(18px);
+  background: rgba(3, 7, 11, .92);
 }
 
 .auth-screen.hidden { display: none; }
@@ -17,8 +16,8 @@
   gap: 16px;
   padding: 34px;
   border: 1px solid var(--line);
-  border-radius: 22px;
-  background: #17182b;
+  border-radius: 8px;
+  background: var(--panel);
   box-shadow: 0 30px 100px #000;
 }
 
@@ -26,9 +25,9 @@
 .auth-card .eyebrow { margin: 0; }
 .auth-card h2 { font-size: 44px; margin-bottom: 8px; }
 .auth-card label { font-size: 11px; font-weight: 800; color: #aaa7b8; }
-.auth-card input { display: block; width: 100%; margin-top: 7px; padding: 13px; border: 1px solid var(--line); border-radius: 10px; background: #101120; color: var(--ink); outline-color: var(--lime); font: 500 13px Manrope; }
+.auth-card input { display: block; width: 100%; margin-top: 7px; padding: 13px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); color: var(--ink); outline-color: var(--accent); font: 500 13px inherit; }
 .auth-card .primary-btn { margin-top: 6px; }
-.auth-switch { border: 0; background: transparent; color: var(--lav); font-size: 12px; }
+.auth-switch { border: 0; background: transparent; color: var(--accent); font-size: 12px; }
 .auth-error { min-height: 17px; margin: 0; color: #f19c7b; font-size: 12px; }
 #telegramAuthFields { display: grid; gap: 12px; }
 .current-user { margin-left: auto; margin-right: 12px; color: var(--muted); font-size: 12px; font-weight: 700; }
@@ -36,16 +35,16 @@
 .topbar .current-user + button { margin-right: 8px; }
 button:disabled { cursor: wait; opacity: .65; }
 
-#telegramDialog { width: min(480px, calc(100% - 32px)); border: 1px solid var(--line); border-radius: 22px; padding: 0; color: var(--ink); background: #17182b; box-shadow: 0 30px 100px #000; }
-#telegramDialog::backdrop { background: rgba(5, 6, 17, .72); backdrop-filter: blur(8px); }
+#telegramDialog { width: min(480px, calc(100% - 32px)); border: 1px solid var(--line); border-radius: 8px; padding: 0; color: var(--ink); background: var(--panel); box-shadow: 0 30px 100px #000; }
+#telegramDialog::backdrop { background: rgba(3, 7, 11, .78); }
 #telegramDialog form { display: grid; gap: 18px; padding: 30px; }
 #telegramDialog label { font-size: 11px; font-weight: 800; color: #aaa7b8; }
-#telegramDialog input { display: block; box-sizing: border-box; width: 100%; margin-top: 7px; padding: 13px; border: 1px solid var(--line); border-radius: 10px; outline-color: var(--lime); color: var(--ink); background: #101120; font: 500 13px Manrope; }
+#telegramDialog input { display: block; box-sizing: border-box; width: 100%; margin-top: 7px; padding: 13px; border: 1px solid var(--line); border-radius: 6px; outline-color: var(--accent); color: var(--ink); background: var(--panel-2); font: 500 13px inherit; }
 .telegram-copy { margin: -2px 0 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
 .telegram-status { min-height: 18px; margin: -4px 0 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
-.telegram-status a { color: var(--lime); font-weight: 800; }
-#publishDialog label { display:grid; gap:7px; margin-top:16px; color:#aaa7b8; font-size:11px; font-weight:800; }
-#publishDialog select,#publishDialog textarea { width:100%; border:1px solid var(--line); border-radius:10px; padding:12px; color:var(--ink); background:#101120; font:500 13px Manrope; outline-color:var(--lime); }
+.telegram-status a { color: var(--accent); font-weight: 800; }
+#publishDialog label { display:grid; gap:7px; margin-top:16px; color:var(--muted); font-size:11px; font-weight:800; }
+#publishDialog select,#publishDialog textarea { width:100%; border:1px solid var(--line); border-radius:6px; padding:12px; color:var(--ink); background:var(--panel-2); font:500 13px inherit; outline-color:var(--accent); }
 #publishDialog textarea { min-height:120px; resize:vertical; }
 
 @media (max-width: 700px) {
