@@ -80,21 +80,11 @@ form.addEventListener('submit', async e => {
 async function openPublish(game) {
   publishingGame = game;
   pendingPublishKey = crypto.randomUUID();
-  $('#publishGameTitle').textContent = `Проверяем: ${game.title} (${game.year})`;
-  $('#publishStatus').textContent = 'Ищем игру в общем каталоге…';
-  $('#publishCandidate').innerHTML = '';
-  $('#publishCandidate').disabled = true;
+  $('#publishGameTitle').textContent = `${game.title} (${game.year})`;
+  $('#publishStatus').textContent = '';
   $('#publishReview').value = '';
-  $('#publishSubmit').disabled = true;
+  $('#publishSubmit').disabled = false;
   $('#publishDialog').showModal();
-  try {
-    const result = await request('/community/validate-game', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({personal_game_id:game.id})});
-    if (!result.candidates.length) { $('#publishStatus').textContent = 'Подходящая игра не найдена. Исправьте название или год в личной библиотеке.'; return; }
-    $('#publishCandidate').innerHTML = result.candidates.map(candidate => `<option value="${esc(candidate.external_id)}">${esc(candidate.title)}${candidate.release_year ? ` (${candidate.release_year})` : ''}</option>`).join('');
-    $('#publishCandidate').disabled = false;
-    $('#publishSubmit').disabled = false;
-    $('#publishStatus').textContent = 'Игра найдена в каталоге. При необходимости выберите другой вариант и добавьте отзыв.';
-  } catch (error) { $('#publishStatus').textContent = error.message; }
 }
 grid.addEventListener('click', async e => { const button = e.target.closest('button[data-action]'); const card = e.target.closest('[data-game-id]'); const game = games.find(g => g.id === +(button?.dataset.id || card?.dataset.gameId)); if (!game) return; if (!button) return openDetails(game); if (button.dataset.action === 'edit') return openForm(game); try { if (button.dataset.action === 'complete') { await request(`${api}${game.id}/complete`, {method:'PATCH'}); toast('Отмечено как пройдено'); await loadGames(); } } catch(err) { toast(err.message); } });
 grid.addEventListener('keydown', e => { if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('[data-game-id]')) { e.preventDefault(); const game = games.find(g => g.id === +e.target.dataset.gameId); if (game) openDetails(game); } });
@@ -109,7 +99,7 @@ async function publishGame(body, idempotencyKey) {
   try { return await request('/community/publish', options); }
   catch (error) { if (!(error instanceof TypeError)) throw error; return request('/community/publish', options); }
 }
-$('#publishForm').addEventListener('submit', async event => { event.preventDefault(); if (!publishingGame || !$('#publishCandidate').value) return; const button = $('#publishSubmit'); if (button.disabled) return; button.disabled = true; $('#publishStatus').textContent = ''; try { await publishGame({personal_game_id:publishingGame.id, external_id:$('#publishCandidate').value, review_text:$('#publishReview').value.trim()}, pendingPublishKey ||= crypto.randomUUID()); pendingPublishKey = null; $('#publishDialog').close(); toast('Игра опубликована в общей библиотеке'); } catch (error) { $('#publishStatus').textContent = error.message; } finally { button.disabled = false; } });
+$('#publishForm').addEventListener('submit', async event => { event.preventDefault(); if (!publishingGame) return; const button = $('#publishSubmit'); if (button.disabled) return; button.disabled = true; $('#publishStatus').textContent = 'Проверяем игру в общем каталоге…'; try { await publishGame({personal_game_id:publishingGame.id, review_text:$('#publishReview').value.trim()}, pendingPublishKey ||= crypto.randomUUID()); pendingPublishKey = null; $('#publishDialog').close(); toast('Игра проверена и опубликована в общей библиотеке'); } catch (error) { $('#publishStatus').textContent = error.message; } finally { button.disabled = false; } });
 $('#searchInput').addEventListener('input', render); $('#filters').addEventListener('click', e => { const button = e.target.closest('button'); if (!button) return; activeFilter = button.dataset.filter; document.querySelectorAll('.filter').forEach(b => b.classList.toggle('active', b === button)); render(); });
 $('#recommendButton').onclick = async () => { try { const game = await request(`${api}recommend`); toast(`Ваш следующий мир: ${game.title}`); document.querySelector(`[data-id="${game.id}"]`)?.closest('.game-card')?.scrollIntoView({behavior:'smooth', block:'center'}); } catch (e) { toast('Нет непройденных игр с рейтингом от 7'); } };
 

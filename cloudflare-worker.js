@@ -591,6 +591,14 @@ export default {
         const requestHash = await sha256(requestBody);
         let body;
         try { body = JSON.parse(requestBody); } catch { return json({detail: "Invalid JSON"}, 400); }
+        const personalGameId = Number(body.personal_game_id);
+        const reviewText = String(body.review_text || "").trim();
+        if (!Number.isInteger(personalGameId) || personalGameId <= 0) return json({detail: "Некорректные данные публикации"}, 422);
+        if (reviewText.length > 3_000) return json({detail: "Отзыв не должен быть длиннее 3000 символов"}, 422);
+        const personalGame = await db.prepare("SELECT id,title,year FROM games WHERE id=? AND owner_id=?")
+          .bind(personalGameId, session.id).first();
+        if (!personalGame) return json({detail: "Игра не найдена в вашей библиотеке"}, 404);
+        if (!env.RAWG_API_KEY) return json({detail: "Каталог игр временно не настроен"}, 503);
         const createdAt = Math.floor(Date.now() / 1000);
         const reservation = await db.prepare(`
           INSERT OR IGNORE INTO idempotency_records(
@@ -613,23 +621,26 @@ export default {
             headers: {"content-type": "application/json;charset=utf-8", "Idempotency-Replayed": "true"},
           });
         }
-        const personalGameId = Number(body.personal_game_id);
-        const externalId = String(body.external_id || "");
-        const reviewText = String(body.review_text || "").trim();
-        if (!Number.isInteger(personalGameId) || personalGameId <= 0 || !/^\d+$/.test(externalId)) return json({detail: "Некорректные данные публикации"}, 422);
-        if (reviewText.length > 3_000) return json({detail: "Отзыв не должен быть длиннее 3000 символов"}, 422);
-        const personalGame = await db.prepare("SELECT id FROM games WHERE id=? AND owner_id=?")
-          .bind(personalGameId, session.id).first();
-        if (!personalGame) return json({detail: "Игра не найдена в вашей библиотеке"}, 404);
-        if (!env.RAWG_API_KEY) return json({detail: "Каталог игр временно не настроен"}, 503);
+        const releaseReservation = () => db.prepare(`
+          DELETE FROM idempotency_records
+          WHERE user_id=? AND idempotency_key=? AND response_json IS NULL
+        `).bind(session.id, idempotencyKey).run();
         let externalGame;
-        try { externalGame = await rawgRequest(env, `/games/${encodeURIComponent(externalId)}`); }
-        catch { return json({detail: "Игра не найдена во внешнем каталоге"}, 422); }
-        const now = Math.floor(Date.now() / 1000);
         try {
+          const search = await rawgRequest(env, "/games", {search: personalGame.title, search_precise: "true", page_size: "10"});
+          const titleMatches = (search.results || []).filter(candidate =>
+            normalizeCatalogTitle(candidate.name) === normalizeCatalogTitle(personalGame.title),
+          );
+          const candidate = titleMatches.find(item => releaseYear(item.released) === personalGame.year) || titleMatches[0];
+          if (!candidate) {
+            await releaseReservation();
+            return json({detail: "Игра не найдена в общем каталоге. Проверьте название и год в личной библиотеке."}, 422);
+          }
+          externalGame = await rawgRequest(env, `/games/${encodeURIComponent(candidate.id)}`);
+          const now = Math.floor(Date.now() / 1000);
           await catalogUpsertStatement(db, externalGame, now).run();
           const catalogGame = await db.prepare("SELECT id FROM catalog_games WHERE source='rawg' AND external_id=?")
-            .bind(externalId).first();
+            .bind(String(candidate.id)).first();
           const response = {catalog_game_id: catalogGame.id, title: externalGame.name, published: true};
           await db.batch([
             db.prepare(`
@@ -645,10 +656,7 @@ export default {
           ]);
           return json(response, 201);
         } catch (error) {
-          await db.prepare(`
-            DELETE FROM idempotency_records
-            WHERE user_id=? AND idempotency_key=? AND response_json IS NULL
-          `).bind(session.id, idempotencyKey).run();
+          await releaseReservation();
           throw error;
         }
       }
