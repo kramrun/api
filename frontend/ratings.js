@@ -31,10 +31,10 @@ async function loadRatings() {
   list.innerHTML = ratings.map(game => `
     <article class="library-card">
       <div class="library-art">${game.cover_url ? `<img src="${escapeHtml(game.cover_url)}" alt="">` : `<span>${escapeHtml(game.title.slice(0, 1))}</span>`}</div>
-      <div class="library-card-top"><span>${game.release_year || 'Год не указан'}</span><strong>${Number(game.average_rating).toFixed(1)}</strong></div>
+      <div class="library-card-top"><span>${game.release_year || 'Год не указан'}</span><strong>${game.external_rating == null ? '—' : Number(game.external_rating).toFixed(1)}</strong></div>
       <h2>${escapeHtml(game.title)}</h2>
       <p class="library-genres">${escapeHtml(game.genres.length ? game.genres.slice(0, 3).join(' · ') : 'Жанр не указан')}</p>
-      <p class="library-votes">${game.votes} ${game.votes === 1 ? 'оценка из общей библиотеки' : 'оценок из общей библиотеки'}</p>
+      <p class="library-votes">Рейтинг из внешнего каталога RAWG</p>
     </article>
   `).join('');
 }

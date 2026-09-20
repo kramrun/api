@@ -74,16 +74,18 @@ function catalogUpsertStatement(db, game, now) {
   return db.prepare(`
     INSERT INTO catalog_games(
       source,external_id,slug,title,normalized_title,released_at,release_year,genres_json,
-      cover_url,source_updated_at,is_active,synced_at,created_at
-    ) VALUES(?,?,?,?,?,?,?,?,?,?,1,?,?)
+      cover_url,external_rating,source_updated_at,is_active,synced_at,created_at
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,1,?,?)
     ON CONFLICT(source,external_id) DO UPDATE SET
       slug=excluded.slug,title=excluded.title,normalized_title=excluded.normalized_title,
       released_at=excluded.released_at,release_year=excluded.release_year,genres_json=excluded.genres_json,
-      cover_url=excluded.cover_url,source_updated_at=excluded.source_updated_at,is_active=1,synced_at=excluded.synced_at
+      cover_url=excluded.cover_url,external_rating=excluded.external_rating,
+      source_updated_at=excluded.source_updated_at,is_active=1,synced_at=excluded.synced_at
   `).bind(
     "rawg", String(game.id), game.slug || null, game.name, normalizeCatalogTitle(game.name),
     game.released || null, releaseYear(game.released), JSON.stringify((game.genres || []).map(genre => genre.name)),
-    game.background_image || null, game.updated || null, now, now,
+    game.background_image || null, Number.isFinite(Number(game.rating)) ? Number(game.rating) : null,
+    game.updated || null, now, now,
   );
 }
 
@@ -642,25 +644,28 @@ export default {
           const catalogGame = await db.prepare("SELECT id FROM catalog_games WHERE source='rawg' AND external_id=?")
             .bind(String(candidate.id)).first();
           const alreadyPublished = await db.prepare(`
-            SELECT id FROM community_posts WHERE user_id=? AND catalog_game_id=? AND status='published' LIMIT 1
-          `).bind(session.id, catalogGame.id).first();
+            SELECT id FROM community_posts WHERE catalog_game_id=? AND status='published' LIMIT 1
+          `).bind(catalogGame.id).first();
           if (alreadyPublished) {
             await releaseReservation();
-            return json({detail: "Эта игра уже опубликована вами в общей библиотеке"}, 409);
+            return json({detail: "Игра уже есть в общей библиотеке"}, 409);
           }
           const response = {catalog_game_id: catalogGame.id, title: externalGame.name, published: true};
-          await db.batch([
+          const [post] = await db.batch([
             db.prepare(`
               INSERT INTO community_posts(user_id,personal_game_id,catalog_game_id,review_text,status,published_at,updated_at)
               VALUES(?,?,?,?, 'published', ?, ?)
-              ON CONFLICT(user_id,personal_game_id) DO UPDATE SET
-                catalog_game_id=excluded.catalog_game_id,review_text=excluded.review_text,status='published',updated_at=excluded.updated_at
+              ON CONFLICT(catalog_game_id) DO NOTHING
             `).bind(session.id, personalGameId, catalogGame.id, reviewText, now, now),
             db.prepare(`
               UPDATE idempotency_records SET response_json=?,status_code=201
-              WHERE user_id=? AND idempotency_key=?
+              WHERE user_id=? AND idempotency_key=? AND changes()=1
             `).bind(JSON.stringify(response), session.id, idempotencyKey),
           ]);
+          if (!post.meta.changes) {
+            await releaseReservation();
+            return json({detail: "Игра уже есть в общей библиотеке"}, 409);
+          }
           return json(response, 201);
         } catch (error) {
           await releaseReservation();
@@ -682,15 +687,12 @@ export default {
 
       if (path === "/community/library" && request.method === "GET") {
         const {results} = await db.prepare(`
-          SELECT c.id,c.title,c.release_year,c.genres_json,c.cover_url,
-            ROUND(AVG(g.rating), 2) AS average_rating,
-            COUNT(DISTINCT p.user_id) AS votes
+          SELECT c.id,c.title,c.release_year,c.genres_json,c.cover_url,c.external_rating
           FROM community_posts p
           JOIN catalog_games c ON c.id=p.catalog_game_id
-          JOIN games g ON g.id=p.personal_game_id
           WHERE p.status='published'
           GROUP BY c.id
-          ORDER BY average_rating DESC, votes DESC, c.title ASC
+          ORDER BY c.external_rating DESC, c.title ASC
           LIMIT 100
         `).all();
         return json(results.map(game => ({...game, genres: JSON.parse(game.genres_json)})));
