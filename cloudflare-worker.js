@@ -261,7 +261,7 @@ async function handleTelegramMessage(message, env, db, updateId) {
     }
     const user = await telegramUser(db, telegramId);
     await sendTelegram(env, chatId, user
-      ? "Checkpoint подключён. Команды: /rating — моя статистика, /add — добавить игру."
+      ? "Checkpoint подключён. Команды: /library — общая библиотека, /rating — моя статистика, /add — добавить игру."
       : "Сначала привяжите Telegram: https://checkpoint-game-library.kramrun2.workers.dev/ — войдите или зарегистрируйтесь, нажмите Telegram и откройте ссылку на бота.");
     return;
   }
@@ -327,6 +327,31 @@ async function handleTelegramMessage(message, env, db, updateId) {
     return;
   }
 
+  if (command === "/library") {
+    const {results} = await db.prepare(`
+      SELECT c.title,c.release_year,c.genres_json,c.external_rating
+      FROM community_posts p
+      JOIN catalog_games c ON c.id=p.catalog_game_id
+      WHERE p.status='published'
+      GROUP BY c.id
+      ORDER BY c.external_rating DESC, c.title ASC
+      LIMIT 10
+    `).all();
+    if (!results.length) {
+      await sendTelegram(env, chatId, "Общая библиотека пока пуста.");
+      return;
+    }
+    const lines = results.map((game, index) => {
+      const genres = JSON.parse(game.genres_json || "[]");
+      const rating = game.external_rating == null ? "—" : Number(game.external_rating).toFixed(2);
+      return `${index + 1}. ${game.title} (${game.release_year || "год не указан"})\n${genres.length ? `Жанры: ${genres.slice(0, 3).join(" · ")}\n` : ""}Рейтинг RAWG: ${rating}`;
+    });
+    await sendTelegram(env, chatId, `Общая библиотека\n\n${lines.join("\n\n")}`, {
+      reply_markup: {inline_keyboard: [[{text: "Открыть на сайте", url: "https://checkpoint-game-library.kramrun2.workers.dev/ratings"}]]},
+    });
+    return;
+  }
+
   if (command === "/add") {
     const game = parseTelegramGame(argumentsText);
     if (!game) {
@@ -341,7 +366,7 @@ async function handleTelegramMessage(message, env, db, updateId) {
     return;
   }
 
-  await sendTelegram(env, chatId, "Команды:\n/rating — моя статистика\n/add Название | Жанр | Год | Рейтинг [| пройдена]\nРазделители: |, \\ или ;");
+  await sendTelegram(env, chatId, "Команды:\n/library — общая библиотека\n/rating — моя статистика\n/add Название | Жанр | Год | Рейтинг [| пройдена]\nРазделители: |, \\ или ;");
 }
 
 async function createSession(db, user) {
